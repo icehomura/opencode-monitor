@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OpenCode Monitor",
+  "version": "0.1.0",
+  "identifier": "com.icehomura.opencode-monitor",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "OpenCode Monitor - Go 额度与用量",
+        "width": 1100,
+        "height": 640,
+        "minWidth": 800,
+        "minHeight": 480,
+        "visible": true,
+        "resizable": true,
+        "decorations": false,
+        "backgroundColor": "#0f1420"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "dmg", "app", "appimage", "deb"],
+    "icon": [
+      "../icons/32x32.png",
+      "../icons/128x128.png",
+      "../icons/128x128@2x.png",
+      "../icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "autostart": null
+  }
+}

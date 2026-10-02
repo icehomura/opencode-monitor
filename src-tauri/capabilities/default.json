@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/acl-manifests.json",
+  "identifier": "default",
+  "description": "OpenCode Monitor 默认能力：无边框窗口的拖动/最小化/最大化/置顶/关闭到托盘",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+    "core:window:allow-set-always-on-top",
+    "core:event:default",
+    "autostart:default"
+  ]
+}

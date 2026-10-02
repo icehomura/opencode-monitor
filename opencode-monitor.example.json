@@ -1,0 +1,6 @@
+{
+  "api_key": "oc_sk_xxx",
+  "base_url": "https://opencode.ai/console/api",
+  "incremental_secs": 5,
+  "close_action": "ask"
+}

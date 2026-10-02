@@ -1,0 +1,47 @@
+# Runtime config (contains API keys and user-specific settings)
+opencode-monitor.json
+opencode-monitor.json.bak
+
+# Database
+opencode-monitor-data.db
+opencode-monitor-data.db-wal
+opencode-monitor-data.db-shm
+opencode-monitor-data.json
+opencode-monitor-data.json.bak
+
+# Rust build artifacts
+target/
+src-tauri/target/
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+
+# Tauri generated files
+src-tauri/gen/
+
+# OMC state files
+.omc/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Misc
+*.log
+.env
+.env.*
+
+# Stakpak session files
+.stakpak/
+
+# Playwright MCP
+.playwright-mcp/
