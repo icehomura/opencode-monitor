@@ -368,17 +368,17 @@ fn range_bucket(range: &str) -> (i64, i64, &'static str) {
             q.as_ref()
                 .and_then(|q| parse(&q.week.starts_at))
                 .unwrap_or(now - 7 * 24 * 3_600_000),
-            3_600_000,
-            "hour",
+            60_000,
+            "minute",
         ),
         "month" => (
             q.as_ref()
                 .and_then(|q| parse(&q.starts_at))
                 .unwrap_or(now - 30 * 24 * 3_600_000),
-            86_400_000,
-            "day",
+            60_000,
+            "minute",
         ),
-        _ => (0, 86_400_000, "day"),
+        _ => (0, 60_000, "minute"),
     }
 }
 
