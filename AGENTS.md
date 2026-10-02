@@ -34,7 +34,7 @@ OpenCode Monitor 是一个基于 Tauri 2 的桌面应用，用于监控 **OpenCo
 
 - 额度、汇总、逐条日志全部依赖登录后的会话 Cookie；未登录时无数据。
 - 支持**多账号**：每个账号一份会话 Cookie，**数据按 `account_id` 隔离**，后台循环逐个账号同步。
-- **主账号**（`primary_account`）：标题栏（计划 / 到期 / 预估可用时长）与第二行卡片（额度 / 当前模型请求限制）只显示主账号数据，并带「主账号」徽标；图表与第一行卡片（当前分钟 / 词元明细 / 时间窗口内）是所有账号的聚合。
+- **主账号**（`primary_account`）：标题栏（计划 / 到期 / 预估可用时长）与第二行的额度卡显示主账号数据；「当前模型请求限制」卡片自带账号下拉（`get_models({ accountId })`：省略 = 主账号，空串 = 全部账号，否则指定账号），默认「全部账号」。图表与第一行卡片是所有账号的聚合。
 - 添加账号 = 新开 WebView 登录（`open_login_window({ addNew: true })`）后 `capture_login` 落盘；
   `logout` 删除 WebView Cookie 罐并清掉该账号凭据（账号条目保留，可用 `remove_account` 删除）。
 - 不读取 WebView 的 httpOnly Cookie 时，Windows 上必须在 **async 命令**里读（同步会死锁）。
@@ -96,7 +96,7 @@ opencode-monitor/
 
 `get_settings`、`save_settings`、`list_accounts`、`set_primary_account`、`rename_account`、`remove_account`、
 `get_quota`（可带 `accountId`）、`get_sync_status`、`sync_request_logs_now`、
-`get_dashboard`（可带 `sinceMs` / `untilMs`）、`get_request_logs`、`get_models`、`get_rpm`、
+`get_dashboard`（可带 `sinceMs` / `untilMs`）、`get_request_logs`、`get_models`（可带 `accountId`）、`get_rpm`、
 `open_login_window`、`capture_login`、`login_status`、`logout`、
 `get_close_action`、`set_close_action`、`get_autostart`、`set_autostart`。
 
