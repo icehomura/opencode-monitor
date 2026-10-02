@@ -2,7 +2,6 @@
   <div class="app-shell">
     <TitleBar
       :quota="stats.quota"
-      :primary-name="stats.primaryName"
       @open-settings="showSettings = true"
     />
     <Toolbar
@@ -21,11 +20,13 @@
         :reason="stats.quotaReason"
         :models="stats.models"
         :defaultModelId="stats.defaultModelId"
+        :accounts="stats.accounts"
+        :modelsAccount="stats.modelsAccount"
         :windowStats="stats.windowStats"
         :minute="stats.minute"
         :convertUnits="convertUnits"
-        :primary-name="stats.primaryName"
-      />
+        @models-account-change="setModelsAccount"
+        />
       <UsageChart
         :points="stats.series"
         :granularity="stats.granularity"

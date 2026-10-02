@@ -87,7 +87,7 @@
     <section class="cards cards-4">
       <div class="card" v-for="m in meters" :key="m.key">
         <div class="card-title">
-          <span class="title-group">{{ m.label }}<span class="primary-badge" :title="primaryTitle">主账号</span></span>
+          <span class="title-group">{{ m.label }}</span>
           <span class="card-sub" v-if="m.resets_at">重置于 {{ fmtDateTime(m.resets_at) }}</span>
         </div>
         <div class="card-body">
@@ -110,13 +110,21 @@
 
       <div class="card model-card">
         <div class="card-title model-title">
-          <span class="title-group">当前模型请求限制<span class="primary-badge" :title="primaryTitle">主账号</span></span>
-          <DdSelect
-            v-if="selectedModel"
-            class="model-dd"
-            :options="modelOptions"
-            v-model="selectedId"
-          />
+          <span class="title-group">当前模型请求限制</span>
+          <div class="title-selects">
+            <DdSelect
+              class="card-dd"
+              :options="accountOptions"
+              v-model="accountId"
+              @update:modelValue="onAccountChange"
+            />
+            <DdSelect
+              class="card-dd"
+              :options="modelOptions"
+              v-model="selectedId"
+              placeholder="请选择模型"
+            />
+          </div>
         </div>
         <div class="card-body model-body">
           <template v-if="selectedModel">
@@ -151,14 +159,16 @@ const props = defineProps({
   reason: { type: String, default: '' },
   models: { type: Array, default: () => [] },
   defaultModelId: { type: String, default: '' },
+  accounts: { type: Array, default: () => [] },
+  modelsAccount: { type: String, default: '' },
   windowStats: { type: Object, default: () => ({ requests: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, active_minutes: 0, window_minutes: 0 }) },
   minute: { type: Object, default: () => ({ input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 }) },
   convertUnits: { type: Boolean, default: false },
-  primaryName: { type: String, default: '' },
 })
 
+const emit = defineEmits(['models-account-change'])
+
 // 第二行（额度卡 + 当前模型请求限制）只显示主账号数据
-const primaryTitle = computed(() => (props.primaryName ? `主账号：${props.primaryName}` : '主账号'))
 
 // ── 第一行：词元统计 ──
 const ws = computed(() => props.windowStats || {})
@@ -276,11 +286,6 @@ function reqText(used, limit) {
 }
 .card-sub { font-size: 10px; color: var(--muted); }
 .title-group { display: inline-flex; align-items: center; }
-.primary-badge {
-  margin-left: 6px; font-size: 10px; font-weight: 500; color: var(--blue);
-  background: rgba(79,140,255,.12); border: 1px solid rgba(79,140,255,.30);
-  border-radius: 8px; padding: 0 6px; line-height: 1.6; white-space: nowrap;
-}
 .card-body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
 
 .tok-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; width: 100%; }

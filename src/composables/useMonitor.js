@@ -24,10 +24,9 @@ export function useMonitor() {
     rangeTo: hasSavedCustom ? savedTo : 0,
     login: { logged_in: false, org_id: '' },
     accounts: [],
-    primary: '',
-    primaryName: '',
     models: [],
     defaultModelId: '',
+    modelsAccount: savedModelsAccount,
     windowStats: { requests: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, active_minutes: 0, window_minutes: 0 },
     minute: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 },
     quota: null,
@@ -61,12 +60,8 @@ export function useMonitor() {
       const r = await invoke('list_accounts')
       const list = r?.accounts || []
       stats.accounts = list
-      stats.primary = r?.primary || ''
-      stats.primaryName = list.find((a) => a.id === stats.primary)?.name || ''
     } catch {
       stats.accounts = []
-      stats.primary = ''
-      stats.primaryName = ''
     }
   }
 
