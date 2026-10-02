@@ -401,6 +401,7 @@ async fn get_dashboard(range: String) -> serde_json::Value {
 
     // 无逐条数据（未登录/未同步）时，回退到云端按天/小时汇总（仅总量）
     let mut fallback = false;
+    let mut granularity = GRANULARITY;
     if series.is_empty() {
         fallback = true;
         if let Ok(c) = sync::client() {
@@ -410,6 +411,8 @@ async fn get_dashboard(range: String) -> serde_json::Value {
                 "all" => ("all", "day"),
                 _ => ("7d", "day"),
             };
+            // 云端桶（hour/day）不是分钟，刻度必须跟着实际数据走
+            granularity = if b == "hour" { "hour" } else { "day" };
             series = c
                 .cost_by_day(api_range, b)
                 .await
@@ -434,7 +437,7 @@ async fn get_dashboard(range: String) -> serde_json::Value {
     json!({
         "configured": true,
         "range": range,
-        "granularity": GRANULARITY,
+        "granularity": granularity,
         "fallback": fallback,
         "series": series,
         "summary": serde_json::Value::Null,
