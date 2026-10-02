@@ -53,7 +53,7 @@
       <div class="card">
         <div class="card-title"><span>时间窗口内</span></div>
         <div class="card-body">
-          <div class="tok-grid tok-grid-3">
+          <div class="tok-grid tok-grid-4">
             <div class="tok-cell tok-input">
               <span class="tok-label">总请求数</span>
               <span class="tok-num">{{ fmtTokens(ws.requests, convertUnits) }}</span>
@@ -61,6 +61,10 @@
             <div class="tok-cell tok-output">
               <span class="tok-label">总输出词元数</span>
               <span class="tok-num">{{ fmtTokens(ws.output_tokens, convertUnits) }}</span>
+            </div>
+            <div class="tok-cell tok-cached">
+              <span class="tok-label">金额</span>
+              <span class="tok-num">{{ fmtUsdFine(wsCost) }}</span>
             </div>
             <div class="tok-cell tok-cached">
               <span class="tok-label">空闲时间</span>
@@ -73,6 +77,10 @@
             <div class="tok-cell tok-output">
               <span class="tok-label">平均输出词元数/分</span>
               <span class="tok-num">{{ fmtTokens(avgTpm, convertUnits) }}</span>
+            </div>
+            <div class="tok-cell tok-cached">
+              <span class="tok-label">平均金额/分</span>
+              <span class="tok-num">{{ fmtUsdFine(avgCostPerMin) }}</span>
             </div>
             <div class="tok-cell tok-total">
               <span class="tok-label">时间利用率</span>
@@ -151,7 +159,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { fmtUsd, fmtTokens, fmtDateTime, remainPct } from '../utils/format'
+import { fmtUsd, fmtUsdFine, fmtTokens, fmtDateTime, remainPct } from '../utils/format'
 import DdSelect from './DdSelect.vue'
 
 const props = defineProps({
@@ -177,6 +185,9 @@ const wsCache = computed(() => Number(ws.value.cache_read_tokens || 0))
 const wsInput = computed(() => Number(ws.value.input_tokens || 0))
 const wsOutput = computed(() => Number(ws.value.output_tokens || 0))
 const wsTotal = computed(() => wsInput.value + wsOutput.value)
+const wsCost = computed(() => Number(ws.value.cost_micro_cents || 0))
+// 平均金额/分：用浮点算，避免整数除法把小额抹平
+const avgCostPerMin = computed(() => wsCost.value / Math.max(1, Number(ws.value.window_minutes || 0)))
 
 const minCache = computed(() => Number(props.minute?.cache_read_tokens || 0))
 const minInput = computed(() => Number(props.minute?.input_tokens || 0))
@@ -302,6 +313,7 @@ function reqText(used, limit) {
 
 .tok-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; width: 100%; }
 .tok-grid-3 { grid-template-columns: repeat(3, 1fr) !important; }
+.tok-grid-4 { grid-template-columns: repeat(4, 1fr) !important; }
 .tok-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .tok-label { font-size: 11px; color: var(--muted); }
 .tok-num { font-size: 20px; font-weight: 700; line-height: 1.2; }

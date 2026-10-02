@@ -30,6 +30,19 @@ export function fmtUsdPlain(microCents) {
   return v.toFixed(2)
 }
 
+/**
+ * microCents -> 美元字符串；极小值也尽量显示出来（自适应精度）。
+ * ≥ $0.01 与 fmtUsd 一致（两位小数）；更小的值保留 3 位有效数字（如 $0.000123）。
+ */
+export function fmtUsdFine(microCents) {
+  const v = Number(microCents || 0) / 1e8
+  if (!Number.isFinite(v) || v === 0) return '$0.00'
+  const abs = Math.abs(v)
+  if (abs >= 0.01) return '$' + v.toFixed(2)
+  if (abs < 1e-8) return (v > 0 ? '<' : '>-') + '$0.00000001'
+  return '$' + String(Number(v.toPrecision(3)))
+}
+
 /** 剩余占比（0~100），limit 为 0 时返回 0 */
 export function remainPct(used, limit) {
   if (!limit || limit <= 0) return 0
