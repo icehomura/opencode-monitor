@@ -6,6 +6,14 @@ OpenCode Monitor 是一个基于 Tauri 2 的桌面应用，用于监控 **OpenCo
 从 OpenCode 控制台 API 读取实时额度，并把逐条请求日志同步到本地 SQLite（按天聚合）。
 前端 Vue 3 + Vite，后端 Rust + SQLite (WAL)。
 
+## 项目声明（给协作者 / Agent）
+
+定位：**只读的本地展示工具** —— 把本人账号的额度与用量元数据同步到本地并可视化。
+
+- 不要新增：绕过额度 / 限流 / 计费 / 风控的能力；自动切换或轮换账号；代理转发（AI 网关）；批量注册或代管他人账号；抓取或存储提示词与模型输出；任何上报 / 遥测。
+- 多账号 = 多个本人账号各自同步、各自展示（数据按账号隔离），不存在账号间调度或轮换。
+- 面向用户的告知只写一遍：README「声明」+ 首次启动的「使用须知」弹窗。不要在代码注释里堆免责话术。
+
 ## Tech Stack
 
 - **Runtime**: Tauri 2 (Rust backend + WebView frontend)
@@ -77,7 +85,8 @@ opencode-monitor/
 
 ### 同步 (`sync.rs`)
 - `sync_request_logs(account)` 拉 `/request-logs` 并按天聚合：全量窗口 30d、增量按该账号的 `last_requestlog_ms:<id>`。
-- 后台循环默认每 5 秒，**逐个账号**同步并刷新各自额度，emit `quota-updated` / `sync-status`。
+- 后台循环默认每 30 秒（最小 10 秒，`incremental_secs`），**逐个账号**同步并刷新各自额度，emit `quota-updated` / `sync-status`。
+- 频率与退避保持保守（分页之间 250ms、429/5xx 冷却 120s，见 `COOLDOWN_UNTIL`），不要为了「更实时」调激进。
 
 ### 配置
 - `opencode-monitor.json`：`accounts`（数组）/ `primary_account` / `base_url` / `incremental_secs` / `close_action`。

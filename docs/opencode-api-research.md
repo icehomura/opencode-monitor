@@ -1,5 +1,7 @@
 # OpenCode 云端 API 调研（用于 OpenCode Monitor）
 
+> **说明**：本文件只记录本人登录会话下控制台接口的互操作性观察，用于本地只读展示；请勿据此做批量抓取或代他人访问。
+
 > 来源：`https://opencode.ai/console` 前端 bundle（`/console/assets/index-*.js`）中的 Effect HttpApi 定义，
 > 以及官方文档 `https://opencode.ai/docs/go/`、`/docs/zen/`。
 > 实测时间：2026-10-02。
