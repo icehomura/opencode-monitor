@@ -292,7 +292,7 @@ function reqText(used, limit) {
 <style scoped>
 .cards-wrap { display: flex; flex-direction: column; gap: 16px; }
 .cards { display: grid; gap: 16px; flex-shrink: 0; }
-.cards-3 { grid-template-columns: 2fr 2fr 3fr; }
+.cards-3 { grid-template-columns: 1fr 1fr 2fr; }
 .cards-4 { grid-template-columns: 1fr 1fr 1fr 1.5fr; }
 
 .card {
