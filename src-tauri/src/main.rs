@@ -891,13 +891,7 @@ fn main() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::task::spawn_blocking(|| {
-                    // 单账号时代的 session_cookie 先迁移成账号列表，迁移结果用于认领老数据
-                    accounts::migrate_legacy();
-                    let primary = accounts::primary_id();
-                    store::init_db(&primary);
-                    if accounts::list().len() <= 1 {
-                        store::claim_orphan_rows(&primary);
-                    }
+                    store::init_db();
                     sync::restore_from_db();
                 })
                 .await

@@ -73,17 +73,47 @@ fn create_schema(conn: &Connection) {
     conn.execute_batch(DDL_REQUEST_LOG).expect("创建 request_log 失败");
 }
 
-/// 启动时初始化。`legacy_account` 是单账号时代的老数据归属的账号 id。
-pub fn init_db(legacy_account: &str) {
+/// 本地库只是云端日志的缓存：schema 版本对不上就整表重建，由下次同步重新拉取，
+/// 因此这里不做任何数据迁移。
+const SCHEMA_VERSION: i64 = 1;
+
+fn stored_schema_version(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT value FROM meta WHERE key = 'schema_version'",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|s| s.parse::<i64>().ok())
+    .unwrap_or(0)
+}
+
+fn reset_cache(conn: &Connection) {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS request_log;
+         DROP TABLE IF EXISTS usage_daily;
+         DROP TABLE IF EXISTS meta;",
+    )
+    .ok();
+}
+
+/// 启动时初始化；schema 版本不一致就把缓存表清掉重建。
+pub fn init_db() {
     let path = db_path();
     match Connection::open(&path) {
         Ok(conn) => {
             conn.execute_batch("PRAGMA journal_mode=WAL;").ok();
             conn.execute_batch("PRAGMA busy_timeout=3000;").ok();
-            create_schema(&conn);
-            if let Err(e) = migrate_to_multi_account(&conn, legacy_account) {
-                eprintln!("[store] 多账号迁移失败：{e}");
+            if stored_schema_version(&conn) != SCHEMA_VERSION {
+                reset_cache(&conn);
             }
+            create_schema(&conn);
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES('schema_version', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![SCHEMA_VERSION.to_string()],
+            )
+            .ok();
             conn.execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_usage_day ON usage_daily(day);
                  CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_daily(user_id);
@@ -96,82 +126,6 @@ pub fn init_db(legacy_account: &str) {
         }
         Err(e) => eprintln!("[store] SQLite 打开失败：{e}，日志同步不可用"),
     }
-}
-
-/// 单账号时代的旧表没有 `account_id`，且主键不含账号维度。
-/// 这里重建两张表并把老数据挂到 `legacy_account` 名下；幂等，新库/已迁移的库直接跳过。
-fn migrate_to_multi_account(conn: &Connection, legacy_account: &str) -> rusqlite::Result<()> {
-    let has_account_id = |table: &str| -> bool {
-        conn.query_row(
-            &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='account_id'"),
-            [],
-            |r| r.get::<_, i64>(0),
-        )
-        .map(|n| n > 0)
-        .unwrap_or(true)
-    };
-
-    if !has_account_id("request_log") {
-        conn.execute_batch(&format!(
-            "ALTER TABLE request_log RENAME TO request_log_legacy; {DDL_REQUEST_LOG}"
-        ))?;
-        conn.execute(
-            "INSERT INTO request_log (
-                 account_id, id, started_at_ms, finished_at_ms, duration_ms, provider, model,
-                 user_id, user_type, input_tokens, output_tokens, reasoning_tokens,
-                 cache_read_tokens, cache_write_tokens, cache_write_1h_tokens,
-                 cost_micro_cents, status_code)
-             SELECT ?1, id, started_at_ms, finished_at_ms, duration_ms, provider, model,
-                    user_id, user_type, input_tokens, output_tokens, reasoning_tokens,
-                    cache_read_tokens, cache_write_tokens, cache_write_1h_tokens,
-                    cost_micro_cents, status_code
-             FROM request_log_legacy",
-            params![legacy_account],
-        )?;
-        conn.execute_batch("DROP TABLE request_log_legacy;")?;
-    }
-
-    if !has_account_id("usage_daily") {
-        conn.execute_batch(&format!(
-            "ALTER TABLE usage_daily RENAME TO usage_daily_legacy; {DDL_USAGE_DAILY}"
-        ))?;
-        conn.execute(
-            "INSERT INTO usage_daily (
-                 account_id, day, user_type, user_id, user_name, provider, model,
-                 requests, input_tokens, output_tokens, cache_read_tokens,
-                 cache_write_5m_tokens, cache_write_1h_tokens, cost_micro_cents, synced_at)
-             SELECT ?1, day, user_type, user_id, user_name, provider, model,
-                    requests, input_tokens, output_tokens, cache_read_tokens,
-                    cache_write_5m_tokens, cache_write_1h_tokens, cost_micro_cents, synced_at
-             FROM usage_daily_legacy",
-            params![legacy_account],
-        )?;
-        conn.execute_batch("DROP TABLE usage_daily_legacy;")?;
-    }
-    Ok(())
-}
-
-/// 把 `account_id` 还为空串的老数据挂到指定账号下（迁移兜底，幂等）。
-pub fn claim_orphan_rows(account_id: &str) -> usize {
-    if account_id.is_empty() {
-        return 0;
-    }
-    with_conn(|conn| {
-        let mut n = conn
-            .execute(
-                "UPDATE request_log SET account_id = ?1 WHERE account_id = ''",
-                params![account_id],
-            )
-            .unwrap_or(0);
-        n += conn
-            .execute(
-                "UPDATE usage_daily SET account_id = ?1 WHERE account_id = ''",
-                params![account_id],
-            )
-            .unwrap_or(0);
-        n
-    })
-    .unwrap_or(0)
 }
 
 #[cfg(test)]

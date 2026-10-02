@@ -51,33 +51,7 @@ impl Account {
     }
 }
 
-/// 单账号时代遗留配置里的账号（不落盘）。
-fn legacy_account(cfg: &serde_json::Value) -> Option<Account> {
-    let cookie = cfg
-        .get("session_cookie")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if cookie.is_empty() {
-        return None;
-    }
-    let org_id = cfg
-        .get("org_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let id = if org_id.is_empty() { "default".to_string() } else { org_id.clone() };
-    Some(Account {
-        id,
-        name: "主账号".into(),
-        org_id,
-        cookie,
-    })
-}
-
-/// 账号列表（含遗留配置兜底）。
+/// 账号列表。
 pub fn list() -> Vec<Account> {
     let cfg = crate::read_config_value();
     let mut out: Vec<Account> = cfg
@@ -85,11 +59,6 @@ pub fn list() -> Vec<Account> {
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
     out.retain(|a| !a.id.trim().is_empty());
-    if out.is_empty() {
-        if let Some(legacy) = legacy_account(&cfg) {
-            out.push(legacy);
-        }
-    }
     out
 }
 
@@ -123,28 +92,6 @@ pub fn new_id(org_id: &str) -> String {
         return org.to_string();
     }
     format!("acct_{}", chrono::Utc::now().timestamp_millis())
-}
-
-/// 启动时把遗留的单账号配置迁移成账号列表（幂等；没有遗留配置时不做任何事）。
-pub fn migrate_legacy() -> Option<Account> {
-    let cfg = crate::read_config_value();
-    let has_accounts = cfg
-        .get("accounts")
-        .and_then(|v| v.as_array())
-        .map(|a| !a.is_empty())
-        .unwrap_or(false);
-    if has_accounts {
-        return None;
-    }
-    let legacy = legacy_account(&cfg)?;
-    let stored = legacy.clone();
-    let _ = crate::update_config_value(|v| {
-        v["accounts"] = json!([stored]);
-        v["primary_account"] = json!(legacy.id);
-        v["session_cookie"] = json!("");
-        v["org_id"] = json!("");
-    });
-    Some(legacy)
 }
 
 /// 写入（或按 id 合并）一个账号。
