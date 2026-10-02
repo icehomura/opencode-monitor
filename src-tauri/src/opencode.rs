@@ -119,6 +119,7 @@ pub struct CostPoint {
 /// v2 用量导出的一行（按天 × 用户 × provider × model 汇总）
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct UsageDailyRow {
+    pub account_id: String,
     pub day: String,
     pub user_type: String,
     pub user_id: String,
@@ -165,6 +166,7 @@ mod tests {
 /// 一条逐条请求日志（`/request-logs` 的 items）
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct RequestLog {
+    pub account_id: String,
     pub id: String,
     pub started_at_ms: i64,
     pub finished_at_ms: i64,
@@ -200,6 +202,7 @@ impl RequestLog {
         };
         let user_type = if service_id.is_empty() { "member" } else { "service_account" }.to_string();
         Self {
+            account_id: String::new(),
             id: s(v, "id"),
             started_at_ms: started,
             finished_at_ms: finished,

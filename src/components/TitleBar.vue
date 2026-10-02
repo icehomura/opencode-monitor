@@ -4,6 +4,7 @@
       <strong>OpenCode Monitor</strong>
       <template v-if="quota">
         <span class="plan-badge">{{ quota.plan_name }}</span>
+        <span class="plan-primary" :title="primaryTitle">主账号</span>
         <span class="plan-expiry">到期 {{ fmtDate(quota.ends_at) }}</span>
         <span v-if="quota.cancel_at_period_end" class="plan-warn">到期后不再续费</span>
         <span v-if="estimate" class="plan-estimate" :title="estimateTitle">预估可用 {{ estimate }}</span>
@@ -54,8 +55,12 @@ import IconButton from './base/IconButton.vue'
 
 const props = defineProps({
   quota: { type: Object, default: null },
+  primaryName: { type: String, default: '' },
 })
 defineEmits(['open-settings'])
+
+// 标题栏的计划 / 到期 / 预估可用时长只来自主账号
+const primaryTitle = computed(() => (props.primaryName ? `主账号：${props.primaryName}` : '主账号'))
 
 // ── 预估可用时长 ──
 // 速率直接来自额度计量：某窗口的 已用 microCents / 该窗口已过秒数。
@@ -184,6 +189,11 @@ onMounted(() => {
   padding: 1px 8px; border-radius: 10px; line-height: 1.6; white-space: nowrap;
 }
 .plan-badge.muted { color: var(--muted); }
+.plan-primary {
+  font-size: 10px; font-weight: 500; color: var(--blue); white-space: nowrap;
+  background: rgba(79,140,255,.12); border: 1px solid rgba(79,140,255,.30);
+  border-radius: 10px; padding: 1px 8px; line-height: 1.6;
+}
 .plan-expiry { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .plan-warn {
   font-size: 11px; color: #f0a020; white-space: nowrap;

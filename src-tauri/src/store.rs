@@ -1,15 +1,17 @@
-//! 本地 SQLite 存储：把云端 v2 按天汇总的用量记录同步到本地。
+//! 本地 SQLite 存储：把会话拉到的逐条请求日志同步到本地。
 //!
-//! 表 `usage_daily` 的主键天然幂等：
-//! `(day, user_type, user_id, provider, model)`，
-//! 因此增量同步只需重复 upsert 最近窗口，云端=本地。
-//! 另有一张 `meta` 表记录最近同步时间等键值。
+//! 多账号：所有数据行都带 `account_id`，不同账号的数据互不覆盖——
+//! - `usage_daily` 主键 `(account_id, day, user_type, user_id, provider, model)`
+//! - `request_log` 主键 `(account_id, id)`
+//!
+//! `meta` 表存同步水位；与账号相关的键带后缀（如 `last_requestlog_ms:<account_id>`）。
 
 use crate::opencode::UsageDailyRow;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::Mutex;
 
-const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS usage_daily (
+const DDL_USAGE_DAILY: &str = "CREATE TABLE IF NOT EXISTS usage_daily (
+    account_id TEXT NOT NULL DEFAULT '',
     day TEXT NOT NULL,
     user_type TEXT NOT NULL,
     user_id TEXT NOT NULL,
@@ -24,14 +26,17 @@ const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS usage_daily (
     cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
     cost_micro_cents INTEGER NOT NULL DEFAULT 0,
     synced_at INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (day, user_type, user_id, provider, model)
-);
-CREATE TABLE IF NOT EXISTS meta (
+    PRIMARY KEY (account_id, day, user_type, user_id, provider, model)
+);";
+
+const DDL_META: &str = "CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS request_log (
-    id TEXT PRIMARY KEY,
+);";
+
+const DDL_REQUEST_LOG: &str = "CREATE TABLE IF NOT EXISTS request_log (
+    account_id TEXT NOT NULL DEFAULT '',
+    id TEXT NOT NULL,
     started_at_ms INTEGER NOT NULL,
     finished_at_ms INTEGER NOT NULL DEFAULT 0,
     duration_ms INTEGER NOT NULL DEFAULT 0,
@@ -46,7 +51,8 @@ CREATE TABLE IF NOT EXISTS request_log (
     cache_write_tokens INTEGER NOT NULL DEFAULT 0,
     cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
     cost_micro_cents INTEGER NOT NULL DEFAULT 0,
-    status_code INTEGER NOT NULL DEFAULT 0
+    status_code INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, id)
 );";
 
 static DB: Mutex<Option<Connection>> = Mutex::new(None);
@@ -61,19 +67,28 @@ fn db_path() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("opencode-monitor-data.db"))
 }
 
-/// 启动时初始化；沿用旧版 RPM/TPM 库的文件名，但表结构不同，
-/// 旧表不会被触碰（这里只 CREATE 自己的表）。
-pub fn init_db() {
+fn create_schema(conn: &Connection) {
+    conn.execute_batch(DDL_USAGE_DAILY).expect("创建 usage_daily 失败");
+    conn.execute_batch(DDL_META).expect("创建 meta 失败");
+    conn.execute_batch(DDL_REQUEST_LOG).expect("创建 request_log 失败");
+}
+
+/// 启动时初始化。`legacy_account` 是单账号时代的老数据归属的账号 id。
+pub fn init_db(legacy_account: &str) {
     let path = db_path();
     match Connection::open(&path) {
         Ok(conn) => {
             conn.execute_batch("PRAGMA journal_mode=WAL;").ok();
             conn.execute_batch("PRAGMA busy_timeout=3000;").ok();
-            conn.execute_batch(SCHEMA).expect("创建用量表失败");
+            create_schema(&conn);
+            if let Err(e) = migrate_to_multi_account(&conn, legacy_account) {
+                eprintln!("[store] 多账号迁移失败：{e}");
+            }
             conn.execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_usage_day ON usage_daily(day);
                  CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_daily(user_id);
-                 CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_daily(model);",
+                 CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_daily(model);
+                 CREATE INDEX IF NOT EXISTS idx_request_log_started ON request_log(started_at_ms);",
             )
             .ok();
             *DB.lock().unwrap_or_else(|e| e.into_inner()) = Some(conn);
@@ -83,10 +98,86 @@ pub fn init_db() {
     }
 }
 
+/// 单账号时代的旧表没有 `account_id`，且主键不含账号维度。
+/// 这里重建两张表并把老数据挂到 `legacy_account` 名下；幂等，新库/已迁移的库直接跳过。
+fn migrate_to_multi_account(conn: &Connection, legacy_account: &str) -> rusqlite::Result<()> {
+    let has_account_id = |table: &str| -> bool {
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='account_id'"),
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .unwrap_or(true)
+    };
+
+    if !has_account_id("request_log") {
+        conn.execute_batch(&format!(
+            "ALTER TABLE request_log RENAME TO request_log_legacy; {DDL_REQUEST_LOG}"
+        ))?;
+        conn.execute(
+            "INSERT INTO request_log (
+                 account_id, id, started_at_ms, finished_at_ms, duration_ms, provider, model,
+                 user_id, user_type, input_tokens, output_tokens, reasoning_tokens,
+                 cache_read_tokens, cache_write_tokens, cache_write_1h_tokens,
+                 cost_micro_cents, status_code)
+             SELECT ?1, id, started_at_ms, finished_at_ms, duration_ms, provider, model,
+                    user_id, user_type, input_tokens, output_tokens, reasoning_tokens,
+                    cache_read_tokens, cache_write_tokens, cache_write_1h_tokens,
+                    cost_micro_cents, status_code
+             FROM request_log_legacy",
+            params![legacy_account],
+        )?;
+        conn.execute_batch("DROP TABLE request_log_legacy;")?;
+    }
+
+    if !has_account_id("usage_daily") {
+        conn.execute_batch(&format!(
+            "ALTER TABLE usage_daily RENAME TO usage_daily_legacy; {DDL_USAGE_DAILY}"
+        ))?;
+        conn.execute(
+            "INSERT INTO usage_daily (
+                 account_id, day, user_type, user_id, user_name, provider, model,
+                 requests, input_tokens, output_tokens, cache_read_tokens,
+                 cache_write_5m_tokens, cache_write_1h_tokens, cost_micro_cents, synced_at)
+             SELECT ?1, day, user_type, user_id, user_name, provider, model,
+                    requests, input_tokens, output_tokens, cache_read_tokens,
+                    cache_write_5m_tokens, cache_write_1h_tokens, cost_micro_cents, synced_at
+             FROM usage_daily_legacy",
+            params![legacy_account],
+        )?;
+        conn.execute_batch("DROP TABLE usage_daily_legacy;")?;
+    }
+    Ok(())
+}
+
+/// 把 `account_id` 还为空串的老数据挂到指定账号下（迁移兜底，幂等）。
+pub fn claim_orphan_rows(account_id: &str) -> usize {
+    if account_id.is_empty() {
+        return 0;
+    }
+    with_conn(|conn| {
+        let mut n = conn
+            .execute(
+                "UPDATE request_log SET account_id = ?1 WHERE account_id = ''",
+                params![account_id],
+            )
+            .unwrap_or(0);
+        n += conn
+            .execute(
+                "UPDATE usage_daily SET account_id = ?1 WHERE account_id = ''",
+                params![account_id],
+            )
+            .unwrap_or(0);
+        n
+    })
+    .unwrap_or(0)
+}
+
 #[cfg(test)]
 pub(crate) fn use_memory_db_for_test() {
     let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(SCHEMA).unwrap();
+    create_schema(&conn);
     *DB.lock().unwrap_or_else(|e| e.into_inner()) = Some(conn);
 }
 
@@ -104,11 +195,11 @@ pub fn upsert_rows(rows: &[UsageDailyRow]) -> usize {
         for r in rows {
             let n = conn.execute(
                 "INSERT INTO usage_daily
-                   (day, user_type, user_id, user_name, provider, model,
+                   (account_id, day, user_type, user_id, user_name, provider, model,
                     requests, input_tokens, output_tokens, cache_read_tokens,
                     cache_write_5m_tokens, cache_write_1h_tokens, cost_micro_cents, synced_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
-                 ON CONFLICT(day, user_type, user_id, provider, model) DO UPDATE SET
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+                 ON CONFLICT(account_id, day, user_type, user_id, provider, model) DO UPDATE SET
                    user_name=excluded.user_name,
                    requests=excluded.requests,
                    input_tokens=excluded.input_tokens,
@@ -119,7 +210,7 @@ pub fn upsert_rows(rows: &[UsageDailyRow]) -> usize {
                    cost_micro_cents=excluded.cost_micro_cents,
                    synced_at=excluded.synced_at",
                 params![
-                    r.day, r.user_type, r.user_id, r.user_name, r.provider, r.model,
+                    r.account_id, r.day, r.user_type, r.user_id, r.user_name, r.provider, r.model,
                     r.requests, r.input_tokens, r.output_tokens, r.cache_read_tokens,
                     r.cache_write_5m_tokens, r.cache_write_1h_tokens, r.cost_micro_cents, now
                 ],
@@ -182,8 +273,9 @@ pub fn get_meta(key: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn row(day: &str, model: &str, cost: i64, requests: i64) -> UsageDailyRow {
+    fn row(account: &str, day: &str, model: &str, cost: i64, requests: i64) -> UsageDailyRow {
         UsageDailyRow {
+            account_id: account.into(),
             day: day.into(),
             user_type: "service_account".into(),
             user_id: "svc_1".into(),
@@ -200,25 +292,28 @@ mod tests {
         }
     }
 
-    /// 同一主键重复 upsert 必须更新而非新增，否则每 5 秒的增量同步会把表撑爆。
+    /// 同一账号同一主键重复 upsert 必须更新而非新增（否则每 5 秒的增量同步会把表撑爆）；
+    /// 不同账号的同一天同一模型必须各自独立成行，不能互相覆盖。
     #[test]
-    fn upsert_is_idempotent() {
+    fn upsert_is_idempotent_and_scoped_by_account() {
         use_memory_db_for_test();
-        assert_eq!(upsert_rows(&[row("2026-10-01", "m1", 100, 1)]), 1);
-        assert_eq!(upsert_rows(&[row("2026-10-02", "m1", 200, 2)]), 1);
-        // 同一天同一模型：应更新那一行
-        assert_eq!(upsert_rows(&[row("2026-10-02", "m1", 350, 7)]), 1);
+        assert_eq!(upsert_rows(&[row("acct_1", "2026-10-01", "m1", 100, 1)]), 1);
+        assert_eq!(upsert_rows(&[row("acct_1", "2026-10-02", "m1", 200, 2)]), 1);
+        // 同账号同一天同一模型：应更新那一行
+        assert_eq!(upsert_rows(&[row("acct_1", "2026-10-02", "m1", 350, 7)]), 1);
+        // 另一个账号的同一天同一模型：独立成行，不能覆盖 acct_1
+        assert_eq!(upsert_rows(&[row("acct_2", "2026-10-02", "m1", 500, 5)]), 1);
 
         let (count, cost) = stats_summary();
-        assert_eq!(count, 2, "重复 upsert 不应新增行");
-        assert_eq!(cost, 450, "花费应被覆盖而不是累加");
+        assert_eq!(count, 3, "重复 upsert 不应新增行；不同账号的数据必须隔离");
+        assert_eq!(cost, 950, "花费应被覆盖而不是累加");
     }
 }
 
 // ──────────────── 逐条请求日志（会话授权后） ────────────────
 
-/// 写入逐条日志（按 id 幂等）。
-pub fn insert_request_logs(logs: &[crate::opencode::RequestLog]) -> usize {
+/// 写入逐条日志（按 `(account_id, id)` 幂等）。
+pub fn insert_request_logs(logs: &[crate::opencode::RequestLog], account_id: &str) -> usize {
     if logs.is_empty() {
         return 0;
     }
@@ -228,13 +323,13 @@ pub fn insert_request_logs(logs: &[crate::opencode::RequestLog]) -> usize {
         for l in logs {
             let n = conn.execute(
                 "INSERT OR REPLACE INTO request_log
-                   (id, started_at_ms, finished_at_ms, duration_ms, provider, model,
+                   (account_id, id, started_at_ms, finished_at_ms, duration_ms, provider, model,
                     user_id, user_type, input_tokens, output_tokens, reasoning_tokens,
                     cache_read_tokens, cache_write_tokens, cache_write_1h_tokens,
                     cost_micro_cents, status_code)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
                 params![
-                    l.id, l.started_at_ms, l.finished_at_ms, l.duration_ms, l.provider, l.model,
+                    account_id, l.id, l.started_at_ms, l.finished_at_ms, l.duration_ms, l.provider, l.model,
                     l.user_id, l.user_type, l.input_tokens, l.output_tokens, l.reasoning_tokens,
                     l.cache_read_tokens, l.cache_write_tokens, l.cache_write_1h_tokens,
                     l.cost_micro_cents, l.status_code
@@ -264,35 +359,68 @@ pub fn request_log_stats() -> (i64, i64, i64) {
     .unwrap_or((0, 0, 0))
 }
 
+/// 某账号的 (条数, 最晚 started_at_ms)，用于账号列表。
+pub fn account_row_stats(account_id: &str) -> (i64, i64) {
+    with_conn(|conn| {
+        conn.query_row(
+            "SELECT COUNT(*), COALESCE(MAX(started_at_ms),0) FROM request_log WHERE account_id = ?1",
+            params![account_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap_or((0, 0))
+    })
+    .unwrap_or((0, 0))
+}
+
+/// 删除某账号的全部本地数据（删除账号时用）。返回删除的行数。
+pub fn purge_account(account_id: &str) -> usize {
+    with_conn(|conn| {
+        let mut n = conn
+            .execute("DELETE FROM request_log WHERE account_id = ?1", params![account_id])
+            .unwrap_or(0);
+        n += conn
+            .execute("DELETE FROM usage_daily WHERE account_id = ?1", params![account_id])
+            .unwrap_or(0);
+        let _ = conn.execute(
+            "DELETE FROM meta WHERE key LIKE '%:' || ?1",
+            params![account_id],
+        );
+        n
+    })
+    .unwrap_or(0)
+}
+
 /// 把逐条日志聚合成按天行（供 usage_daily / 日志表展示）。
 pub fn request_logs_to_daily() -> Vec<UsageDailyRow> {
     let mut out = Vec::new();
     with_conn(|conn| {
         let mut stmt = match conn.prepare(
-            "SELECT date(started_at_ms/1000,'unixepoch') AS day, user_type, user_id, provider, model,
+            "SELECT account_id,
+                    date(started_at_ms/1000,'unixepoch') AS day, user_type, user_id, provider, model,
                     COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
                     COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_write_tokens),0),
                     COALESCE(SUM(cache_write_1h_tokens),0), COALESCE(SUM(cost_micro_cents),0)
-             FROM request_log GROUP BY day, user_type, user_id, provider, model",
+             FROM request_log GROUP BY account_id, day, user_type, user_id, provider, model",
         ) {
             Ok(s) => s,
             Err(_) => return,
         };
         let mapped = stmt.query_map([], |row| {
             Ok(UsageDailyRow {
-                day: row.get(0)?,
-                user_type: row.get(1)?,
-                user_id: row.get(2)?,
+                account_id: row.get(0)?,
+                day: row.get(1)?,
+                user_type: row.get(2)?,
+                user_id: row.get(3)?,
                 user_name: String::new(),
-                provider: row.get(3)?,
-                model: row.get(4)?,
-                requests: row.get(5)?,
-                input_tokens: row.get(6)?,
-                output_tokens: row.get(7)?,
-                cache_read_tokens: row.get(8)?,
-                cache_write_5m_tokens: row.get(9)?,
-                cache_write_1h_tokens: row.get(10)?,
-                cost_micro_cents: row.get(11)?,
+                provider: row.get(4)?,
+                model: row.get(5)?,
+                requests: row.get(6)?,
+                input_tokens: row.get(7)?,
+                output_tokens: row.get(8)?,
+                cache_read_tokens: row.get(9)?,
+                cache_write_5m_tokens: row.get(10)?,
+                cache_write_1h_tokens: row.get(11)?,
+                cost_micro_cents: row.get(12)?,
             })
         });
         if let Ok(rows) = mapped {
@@ -378,18 +506,20 @@ pub struct ModelUsage {
 }
 
 /// 某个时间点之后，按模型聚合。
-pub fn model_usage_since(since_ms: i64) -> Vec<ModelUsage> {
+pub fn model_usage_since(since_ms: i64, account_id: &str) -> Vec<ModelUsage> {
     let mut out = Vec::new();
     with_conn(|conn| {
         let mut stmt = match conn.prepare(
             "SELECT model, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
                     COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cost_micro_cents),0)
-             FROM request_log WHERE started_at_ms >= ?1 GROUP BY model ORDER BY 6 DESC",
+             FROM request_log
+             WHERE started_at_ms >= ?1 AND (?2 = '' OR account_id = ?2)
+             GROUP BY model ORDER BY 6 DESC",
         ) {
             Ok(s) => s,
             Err(_) => return,
         };
-        let mapped = stmt.query_map(params![since_ms], |row| {
+        let mapped = stmt.query_map(params![since_ms, account_id], |row| {
             Ok(ModelUsage {
                 model: row.get(0)?,
                 requests: row.get(1)?,
@@ -479,6 +609,7 @@ pub fn rpm_stats(window_ms: i64) -> RpmStats {
 /// 逐条日志分页（按时间倒序）。
 pub fn query_request_logs(
     since_ms: Option<i64>,
+    account_id: Option<&str>,
     page: u32,
     page_size: u32,
 ) -> (Vec<crate::opencode::RequestLog>, u32) {
@@ -489,38 +620,41 @@ pub fn query_request_logs(
     let total = with_conn(|conn| {
         let total: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM request_log WHERE (?1 IS NULL OR started_at_ms >= ?1)",
-                params![since_ms],
+                "SELECT COUNT(*) FROM request_log
+                 WHERE (?1 IS NULL OR started_at_ms >= ?1) AND (?2 IS NULL OR account_id = ?2)",
+                params![since_ms, account_id],
                 |r| r.get(0),
             )
             .unwrap_or(0);
         let sql = format!(
-            "SELECT id, started_at_ms, finished_at_ms, duration_ms, provider, model,
+            "SELECT account_id, id, started_at_ms, finished_at_ms, duration_ms, provider, model,
                     user_id, user_type, input_tokens, output_tokens, reasoning_tokens,
                     cache_read_tokens, cache_write_tokens, cache_write_1h_tokens,
                     cost_micro_cents, status_code
-             FROM request_log WHERE (?1 IS NULL OR started_at_ms >= ?1)
+             FROM request_log
+             WHERE (?1 IS NULL OR started_at_ms >= ?1) AND (?2 IS NULL OR account_id = ?2)
              ORDER BY started_at_ms DESC LIMIT {page_size} OFFSET {offset}"
         );
         if let Ok(mut stmt) = conn.prepare(&sql) {
-            let mapped = stmt.query_map(params![since_ms], |row| {
+            let mapped = stmt.query_map(params![since_ms, account_id], |row| {
                 Ok(crate::opencode::RequestLog {
-                    id: row.get(0)?,
-                    started_at_ms: row.get(1)?,
-                    finished_at_ms: row.get(2)?,
-                    duration_ms: row.get(3)?,
-                    provider: row.get(4)?,
-                    model: row.get(5)?,
-                    user_id: row.get(6)?,
-                    user_type: row.get(7)?,
-                    input_tokens: row.get(8)?,
-                    output_tokens: row.get(9)?,
-                    reasoning_tokens: row.get(10)?,
-                    cache_read_tokens: row.get(11)?,
-                    cache_write_tokens: row.get(12)?,
-                    cache_write_1h_tokens: row.get(13)?,
-                    cost_micro_cents: row.get(14)?,
-                    status_code: row.get(15)?,
+                    account_id: row.get(0)?,
+                    id: row.get(1)?,
+                    started_at_ms: row.get(2)?,
+                    finished_at_ms: row.get(3)?,
+                    duration_ms: row.get(4)?,
+                    provider: row.get(5)?,
+                    model: row.get(6)?,
+                    user_id: row.get(7)?,
+                    user_type: row.get(8)?,
+                    input_tokens: row.get(9)?,
+                    output_tokens: row.get(10)?,
+                    reasoning_tokens: row.get(11)?,
+                    cache_read_tokens: row.get(12)?,
+                    cache_write_tokens: row.get(13)?,
+                    cache_write_1h_tokens: row.get(14)?,
+                    cost_micro_cents: row.get(15)?,
+                    status_code: row.get(16)?,
                     ..Default::default()
                 })
             });

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accounts;
 mod models;
 mod opencode;
 mod store;
@@ -83,6 +84,16 @@ fn read_saved_config_str(key: &str) -> String {
         .to_string()
 }
 
+/// 控制台 API 基址（配置为空时用默认值）。
+pub(crate) fn base_url() -> String {
+    let base = read_config_value()
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string());
+    base.unwrap_or_else(|| opencode::DEFAULT_BASE_URL.to_string())
+}
+
 /// 增量同步间隔（秒），默认 5，夹在 2~3600。
 pub(crate) fn incremental_secs() -> u64 {
     read_config_value()
@@ -138,13 +149,19 @@ fn save_settings(base_url: String, incremental_secs: u64) -> Result<serde_json::
 
 /// 当前额度。优先读缓存；未登录或未拉取时即时请求一次。
 #[tauri::command]
-async fn get_quota() -> serde_json::Value {
-    if let Some(q) = sync::quota() {
-        return json!({ "available": true, "quota": q });
+async fn get_quota(account_id: Option<String>) -> serde_json::Value {
+    let target = account_id.filter(|s| !s.trim().is_empty());
+    let id = target.clone().unwrap_or_else(accounts::primary_id);
+    if let Some(q) = sync::quota_for(&id) {
+        return json!({ "available": true, "quota": q, "account_id": id });
     }
-    match sync::refresh_quota(None).await {
-        Ok(q) => json!({ "available": true, "quota": q }),
-        Err(e) => json!({ "available": false, "reason": e }),
+    let acc = match accounts::find(&id) {
+        Some(a) => a,
+        None => return json!({ "available": false, "reason": "尚未添加账号", "account_id": id }),
+    };
+    match sync::refresh_quota(&acc, None).await {
+        Ok(q) => json!({ "available": true, "quota": q, "account_id": id }),
+        Err(e) => json!({ "available": false, "reason": e, "account_id": id }),
     }
 }
 
@@ -153,18 +170,36 @@ fn get_sync_status() -> serde_json::Value {
     json!(sync::status())
 }
 
-/// 用登录会话拉取逐条日志（需要先完成 WebView 授权）。
+/// 立即同步：逐个账号拉取逐条日志（需要先完成 WebView 授权）。
 #[tauri::command]
 async fn sync_request_logs_now(full: bool) -> Result<serde_json::Value, String> {
-    let sc = sync::session()?;
-    let n = sync::sync_request_logs(&sc, full, None).await?;
-    Ok(json!({ "ok": true, "rows": n }))
+    let mut total = 0usize;
+    let mut synced = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    for acc in accounts::list() {
+        if !acc.logged_in() {
+            continue;
+        }
+        match sync::sync_request_logs(&acc, full, None).await {
+            Ok(n) => {
+                total += n;
+                synced += 1;
+            }
+            Err(e) => errors.push(format!("{}：{e}", acc.display_name())),
+        }
+    }
+    if synced == 0 && !errors.is_empty() {
+        return Err(errors.join("；"));
+    }
+    Ok(json!({ "ok": true, "rows": total, "accounts": synced, "errors": errors }))
 }
 
-/// 每个「用到的模型」的额度与实际用量（5h / 周 / 月）
+/// 每个「用到的模型」的额度与实际用量（5h / 周 / 月）。
+/// 额度与用量都只取**主账号**口径（多账号下与标题栏 / 第二行卡片保持一致）。
 #[tauri::command]
 fn get_models() -> serde_json::Value {
-    let q = sync::quota();
+    let primary = accounts::primary_id();
+    let q = sync::quota_for(&primary);
     let product = q
         .as_ref()
         .map(|q| q.product.clone())
@@ -188,9 +223,9 @@ fn get_models() -> serde_json::Value {
         .and_then(|q| parse(&q.starts_at))
         .unwrap_or(now - 30 * 24 * 3600 * 1000);
 
-    let u5 = store::model_usage_since(start_5h);
-    let uw = store::model_usage_since(start_week);
-    let um = store::model_usage_since(start_month);
+    let u5 = store::model_usage_since(start_5h, &primary);
+    let uw = store::model_usage_since(start_week, &primary);
+    let um = store::model_usage_since(start_month, &primary);
 
     let mut used: Vec<String> = Vec::new();
     for list in [&u5, &uw, &um] {
@@ -243,9 +278,14 @@ fn get_models() -> serde_json::Value {
     json!({ "product": product, "models": items })
 }
 
-/// 逐条请求日志分页
+/// 逐条请求日志分页；`account_id` 为空表示所有账号。
 #[tauri::command]
-fn get_request_logs(range: String, page: Option<u32>, page_size: Option<u32>) -> serde_json::Value {
+fn get_request_logs(
+    range: String,
+    account_id: Option<String>,
+    page: Option<u32>,
+    page_size: Option<u32>,
+) -> serde_json::Value {
     let now = chrono::Utc::now().timestamp_millis();
     let since = match range.as_str() {
         "1h" => Some(now - 3_600_000),
@@ -254,7 +294,9 @@ fn get_request_logs(range: String, page: Option<u32>, page_size: Option<u32>) ->
         "30d" => Some(now - 30 * 24 * 3_600_000),
         _ => None,
     };
-    let (rows, total) = store::query_request_logs(since, page.unwrap_or(1), page_size.unwrap_or(50));
+    let account = account_id.filter(|s| !s.trim().is_empty());
+    let (rows, total) =
+        store::query_request_logs(since, account.as_deref(), page.unwrap_or(1), page_size.unwrap_or(50));
     json!({ "rows": rows, "total": total })
 }
 
@@ -291,7 +333,7 @@ const GRANULARITY: &str = "minute";
 /// 「当前5小时 / 本周 / 本月」的起点 = 官方重置时间往前推对应时长（即 meter.startsAt）。
 fn range_since(range: &str) -> i64 {
     let now = chrono::Utc::now().timestamp_millis();
-    let q = sync::quota();
+    let q = sync::quota_of(None);
     let parse = |s: &Option<String>| -> Option<i64> {
         s.as_ref()
             .and_then(|x| chrono::DateTime::parse_from_rfc3339(x).ok())
@@ -353,12 +395,13 @@ async fn get_dashboard(
         })
         .collect();
 
-    // 无逐条数据（未登录/未同步）时，回退到云端按天/小时汇总（仅总量）
+    // 无逐条数据（未登录/未同步）时，回退到云端按天/小时汇总（仅总量）；
+    // 自定义区间没有对应的云端聚合口径，不做回退。
     let mut fallback = false;
     let mut granularity = GRANULARITY;
-    if series.is_empty() {
+    if series.is_empty() && !custom {
         fallback = true;
-        if let Ok(c) = sync::session() {
+        if let Some(c) = accounts::primary().and_then(|a| a.session().ok()) {
             let (api_range, b) = match range.as_str() {
                 "today" => ("24h", "hour"),
                 "month" => ("30d", "day"),
@@ -452,21 +495,77 @@ fn extract_org_id(v: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// 打开（或聚焦）一个专门用于登录授权的 WebView 窗口。
+/// 在工作区 / 用户信息里找一个可读名称（邮箱 / 名称 / slug），找不到就返回 None。
+fn extract_label(v: &serde_json::Value) -> Option<String> {
+    extract_label_at(v, 0)
+}
+
+fn extract_label_at(v: &serde_json::Value, depth: usize) -> Option<String> {
+    if depth > 2 {
+        return None;
+    }
+    if let Some(o) = v.as_object() {
+        for key in ["email", "name", "displayName", "slug"] {
+            if let Some(s) = o.get(key).and_then(|x| x.as_str()) {
+                let s = s.trim();
+                if !s.is_empty() {
+                    return Some(s.to_string());
+                }
+            }
+        }
+        for val in o.values() {
+            if let Some(found) = extract_label_at(val, depth + 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// 待处理的登录请求：(是否新增账号, 目标账号 id)。
+static PENDING_LOGIN: std::sync::RwLock<Option<(bool, String)>> = std::sync::RwLock::new(None);
+
+fn set_pending_login(add_new: bool, account_id: String) {
+    *PENDING_LOGIN.write().unwrap_or_else(|e| e.into_inner()) = Some((add_new, account_id));
+}
+
+fn take_pending_login() -> (bool, String) {
+    PENDING_LOGIN
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .unwrap_or((false, String::new()))
+}
+
+/// 打开（或聚焦）登录授权的 WebView 窗口。
+/// `add_new` = true 时登录结果会新建一个账号；否则写入 `account_id`（空 = 主账号）。
 #[tauri::command]
-async fn open_login_window(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+async fn open_login_window(
+    app: tauri::AppHandle,
+    add_new: Option<bool>,
+    account_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let add_new = add_new.unwrap_or(false);
+    let account_id = account_id.unwrap_or_default();
+    // 需要换一个身份登录时先清 Cookie 罐：新增账号、指定账号未登录、或当前没有任何已登录账号
+    let target_logged_in = if account_id.is_empty() {
+        accounts::primary().map(|a| a.logged_in()).unwrap_or(false)
+    } else {
+        accounts::find(&account_id).map(|a| a.logged_in()).unwrap_or(false)
+    };
+    let need_clear = add_new || !target_logged_in;
+
     if let Some(w) = app.get_webview_window("auth") {
-        // 程序认为未登录时，清掉残留会话并重新加载登录页，
-        // 否则旧会话会被轮询立刻捕获，用户还没来得及操作就被关窗。
-        if sync::session().is_err() {
+        if need_clear {
             clear_one(&w);
             if let Ok(url) = tauri::Url::parse("https://opencode.ai/console/") {
                 let _ = w.navigate(url);
             }
         }
+        set_pending_login(add_new, account_id);
         let _ = w.show();
         let _ = w.set_focus();
-        return Ok(json!({ "opened": true, "existed": true }));
+        return Ok(json!({ "opened": true, "existed": true, "add_new": add_new }));
     }
     let url = tauri::Url::parse("https://opencode.ai/console/")
         .map_err(|e| format!("无效登录地址：{e}"))?;
@@ -480,7 +579,8 @@ async fn open_login_window(app: tauri::AppHandle) -> Result<serde_json::Value, S
     .center()
     .build()
     .map_err(|e| format!("打开登录窗口失败：{e}"))?;
-    Ok(json!({ "opened": true, "existed": false }))
+    set_pending_login(add_new, account_id);
+    Ok(json!({ "opened": true, "existed": false, "add_new": add_new }))
 }
 
 /// 从登录窗口读取会话 Cookie。必须在 async 命令里调用（Windows 同步调用会死锁）。
@@ -516,64 +616,189 @@ async fn capture_login(app: tauri::AppHandle) -> Result<serde_json::Value, Strin
         .collect::<Vec<_>>()
         .join("; ");
 
-    let base = read_config_value()
-        .get("base_url")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(opencode::DEFAULT_BASE_URL)
-        .to_string();
-
-    // 多路尝试拿工作区 id（控制台所有请求都带 x-org-id，缺了可能 400）
-    let probe = opencode::SessionClient::new(cookie_header.clone(), base.clone(), None);
-    let mut org_id = None;
+    // 多路尝试拿工作区 id 与可读名称（控制台所有请求都带 x-org-id，缺了可能 400）
+    let probe = opencode::SessionClient::new(cookie_header.clone(), base_url(), None);
+    let mut org_id = String::new();
+    let mut label = String::new();
     for attempt in [
         probe.orgs_current().await,
         probe.orgs_list().await,
         probe.user_info().await,
     ] {
         if let Ok(v) = attempt {
-            if let Some(id) = extract_org_id(&v) {
-                org_id = Some(id);
+            if org_id.is_empty() {
+                if let Some(id) = extract_org_id(&v) {
+                    org_id = id;
+                }
+            }
+            if label.is_empty() {
+                if let Some(t) = extract_label(&v) {
+                    label = t;
+                }
+            }
+            if !org_id.is_empty() && !label.is_empty() {
                 break;
             }
         }
     }
 
-    update_config_value(|v| {
-        v["session_cookie"] = json!(cookie_header);
-        v["org_id"] = json!(org_id.clone().unwrap_or_default());
-    })?;
+    // 写入目标账号：add_new = 新建；否则更新指定账号（空 = 主账号）
+    let (add_new, target_id) = take_pending_login();
+    let target_id = resolve_login_target(add_new, &target_id, &org_id, label, cookie_header)?;
+
     // 隐藏而非销毁：视觉上等同关闭，但保留句柄以便退出时清 Cookie 罐
     let _ = w.hide();
-    Ok(json!({ "ok": true, "org_id": org_id, "cookies": jar.len() }))
+    Ok(json!({ "ok": true, "account_id": target_id, "org_id": org_id, "cookies": jar.len() }))
+}
+
+/// 把刚捕获的会话写入目标账号，返回账号 id。
+fn resolve_login_target(
+    add_new: bool,
+    target_id: &str,
+    org_id: &str,
+    label: String,
+    cookie: String,
+) -> Result<String, String> {
+    if add_new {
+        // 同一个工作区再登录一次就并入同一账号，避免重复条目
+        let id = accounts::new_id(org_id);
+        let name = match accounts::find(&id) {
+            Some(a) if !a.name.trim().is_empty() => a.name.clone(),
+            _ if !label.is_empty() => label,
+            _ => format!("账号 {}", accounts::list().len() + 1),
+        };
+        accounts::upsert(accounts::Account {
+            id: id.clone(),
+            name,
+            org_id: org_id.to_string(),
+            cookie,
+        })?;
+        if accounts::primary_id().is_empty() {
+            accounts::set_primary(&id)?;
+        }
+        return Ok(id);
+    }
+
+    let id = if !target_id.is_empty() {
+        target_id.to_string()
+    } else {
+        let primary = accounts::primary_id();
+        if primary.is_empty() {
+            accounts::new_id(org_id)
+        } else {
+            primary
+        }
+    };
+    match accounts::find(&id) {
+        Some(mut acc) => {
+            acc.cookie = cookie;
+            if !org_id.trim().is_empty() {
+                acc.org_id = org_id.to_string();
+            }
+            if acc.name.trim().is_empty() && !label.is_empty() {
+                acc.name = label;
+            }
+            accounts::upsert(acc)?;
+        }
+        None => {
+            accounts::upsert(accounts::Account {
+                id: id.clone(),
+                name: if label.is_empty() { "主账号".into() } else { label },
+                org_id: org_id.to_string(),
+                cookie,
+            })?;
+            accounts::set_primary(&id)?;
+        }
+    }
+    Ok(id)
+}
+
+/// 账号登录状态。
+#[tauri::command]
+fn login_status(account_id: Option<String>) -> serde_json::Value {
+    let acc = match account_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(id) => accounts::find(id),
+        None => accounts::primary(),
+    };
+    match acc {
+        Some(a) => json!({
+            "logged_in": a.logged_in(),
+            "org_id": a.org_id,
+            "account_id": a.id,
+            "name": a.display_name(),
+        }),
+        None => json!({ "logged_in": false, "org_id": "", "account_id": "", "name": "" }),
+    }
+}
+
+/// 账号列表 + 主账号（含每个账号的本地条数与同步水位）。
+#[tauri::command]
+fn list_accounts() -> serde_json::Value {
+    let primary = accounts::primary_id();
+    let items: Vec<serde_json::Value> = accounts::list()
+        .into_iter()
+        .map(|a| {
+            let (rows, last_log) = store::account_row_stats(&a.id);
+            let last_sync = store::get_meta(&format!("last_sync_ms:{}", a.id))
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            json!({
+                "id": a.id,
+                "name": a.display_name(),
+                "org_id": a.org_id,
+                "logged_in": a.logged_in(),
+                "is_primary": a.id == primary,
+                "rows": rows,
+                "last_log_ms": last_log,
+                "last_sync_ms": last_sync,
+                "quota": sync::quota_for(&a.id),
+            })
+        })
+        .collect();
+    json!({ "accounts": items, "primary": primary })
+}
+
+/// 设置主账号：标题栏与第二行卡片（额度 / 模型请求次数）随之切换。
+#[tauri::command]
+fn set_primary_account(id: String) -> Result<serde_json::Value, String> {
+    accounts::set_primary(&id)?;
+    Ok(json!({ "ok": true, "primary": id }))
 }
 
 #[tauri::command]
-fn login_status() -> serde_json::Value {
-    let cfg = read_config_value();
-    let logged_in = cfg
-        .get("session_cookie")
-        .and_then(|v| v.as_str())
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false);
-    let org = cfg.get("org_id").and_then(|v| v.as_str()).unwrap_or("");
-    json!({ "logged_in": logged_in, "org_id": org })
+fn rename_account(id: String, name: String) -> Result<serde_json::Value, String> {
+    accounts::rename(&id, &name)?;
+    Ok(json!({ "ok": true }))
 }
 
+/// 删除账号：`purge` 为真时同时清掉本地已同步的数据。
 #[tauri::command]
-async fn logout(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+fn remove_account(id: String, purge: Option<bool>) -> Result<serde_json::Value, String> {
+    let removed = if purge.unwrap_or(false) { store::purge_account(&id) } else { 0 };
+    accounts::remove(&id)?;
+    sync::set_quota_for(&id, None);
+    Ok(json!({ "ok": true, "purged": removed }))
+}
+
+/// 退出登录：清掉该账号的 Cookie 与 WebView 会话（账号条目保留）。
+#[tauri::command]
+async fn logout(app: tauri::AppHandle, account_id: Option<String>) -> Result<serde_json::Value, String> {
     // 1) 清空 WebView 的 Cookie 罐（否则会话还在，再次登录会被立刻自动捕获）
     clear_webview_cookies(&app);
     // 2) 关掉保留的授权窗口
     if let Some(w) = app.get_webview_window("auth") {
         let _ = w.close();
     }
-    // 3) 清配置
-    update_config_value(|v| {
-        v["session_cookie"] = json!("");
-        v["org_id"] = json!("");
-    })?;
-    Ok(json!({ "ok": true }))
+    // 3) 清凭据
+    let id = match account_id.filter(|s| !s.trim().is_empty()) {
+        Some(id) => id,
+        None => accounts::primary_id(),
+    };
+    if !id.is_empty() {
+        accounts::clear_cookie(&id)?;
+        sync::set_quota_for(&id, None);
+    }
+    Ok(json!({ "ok": true, "account_id": id }))
 }
 
 /// 清空 WebView 的浏览数据（含 httpOnly 的会话 Cookie）。
@@ -666,7 +891,13 @@ fn main() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::task::spawn_blocking(|| {
-                    store::init_db();
+                    // 单账号时代的 session_cookie 先迁移成账号列表，迁移结果用于认领老数据
+                    accounts::migrate_legacy();
+                    let primary = accounts::primary_id();
+                    store::init_db(&primary);
+                    if accounts::list().len() <= 1 {
+                        store::claim_orphan_rows(&primary);
+                    }
                     sync::restore_from_db();
                 })
                 .await
@@ -768,6 +999,10 @@ fn main() {
             capture_login,
             login_status,
             logout,
+            list_accounts,
+            set_primary_account,
+            rename_account,
+            remove_account,
             sync_request_logs_now,
             get_models,
             get_request_logs,

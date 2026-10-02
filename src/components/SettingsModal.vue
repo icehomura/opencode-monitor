@@ -27,7 +27,51 @@
 
         <!-- ── Tab：账户 ── -->
         <div v-show="activeTab === 'account'" class="tab-pane">
-          <SettingsCard title="OpenCode 账户" description="登录 OpenCode 账户同步控制台日志；基址与同步间隔自动保存">
+          <SettingsCard title="账号管理"
+            description="所有账号都会同步日志；标题栏与额度 / 模型卡片只显示主账号" auto>
+            <template #actions>
+              <div class="acct-head-actions">
+                <BaseButton v-if="showPrimaryLogin" @click="loginPrimary">登录主账号</BaseButton>
+                <BaseButton variant="primary" @click="addAccount">
+                  <span style="margin-right:4px">+</span> 添加账号
+                </BaseButton>
+              </div>
+            </template>
+
+            <div v-if="accounts.length" class="acct-list">
+              <div v-for="a in accounts" :key="a.id" class="acct-item">
+                <div class="acct-info">
+                  <span class="acct-name">
+                    <span class="acct-title" :title="a.name">{{ a.name }}</span>
+                    <span v-if="a.is_primary" class="acct-badge">主账号</span>
+                    <span class="acct-state" :class="{ on: a.logged_in }">{{ a.logged_in ? '已登录' : '未登录' }}</span>
+                  </span>
+                  <span class="acct-detail">
+                    本地 {{ a.rows || 0 }} 条 · 最近同步 {{ fmtAgo(a.last_sync_ms) }} ·
+                    <template v-if="a.quota">额度 5 小时 {{ fmtUsd(a.quota.five_hour.used_micro_cents) }} / 周 {{ fmtUsd(a.quota.week.used_micro_cents) }} / 月 {{ fmtUsd(a.quota.month.used_micro_cents) }}</template>
+                    <template v-else>额度 —</template>
+                  </span>
+                  <span v-if="a.org_id" class="acct-org" :title="a.org_id">{{ a.org_id }}</span>
+                </div>
+                <div class="acct-actions">
+                  <BaseButton v-if="!a.is_primary" @click="setPrimaryAccount(a)">设为主账号</BaseButton>
+                  <BaseButton @click="editAccount(a)">编辑</BaseButton>
+                  <BaseButton @click="reloginAccount(a)">重新登录</BaseButton>
+                  <BaseButton @click="logoutAccount(a)" :disabled="!a.logged_in">退出登录</BaseButton>
+                  <BaseButton variant="danger" @click="removeAccount(a)">删除</BaseButton>
+                </div>
+              </div>
+            </div>
+            <div v-else class="acct-empty">
+              <span class="muted">暂无账号，点击右上角「登录主账号」或「添加账号」在弹出窗口登录后自动创建。</span>
+            </div>
+
+            <template #hint>
+              <small :class="['ff-hint', acctMsgType]">{{ acctMsg }}</small>
+            </template>
+          </SettingsCard>
+
+          <SettingsCard title="接口与同步间隔" description="接口基址与同步间隔修改后自动保存">
             <div class="form-col">
               <div class="settings-row">
                 <span class="settings-label">接口基址</span>
@@ -37,29 +81,21 @@
                 <span class="settings-label">同步间隔（秒）</span>
                 <BaseInput v-model.number="intervalSecs" type="number" spinner :min="2" :max="3600" />
               </div>
-              <div class="settings-row">
-                <span class="settings-label">登录授权</span>
-                <span class="login-inline">
-                  <span class="login-state" :class="{ on: login.logged_in }">{{ login.logged_in ? '已授权' : '未授权' }}</span>
-                  <BaseButton variant="primary" @click="startLogin">登录 OpenCode</BaseButton>
-                  <BaseButton @click="doLogout" :disabled="!login.logged_in">退出</BaseButton>
-                </span>
-              </div>
             </div>
             <template #hint>
               <small :class="['ff-hint', msgType]">{{ msg }}</small>
             </template>
           </SettingsCard>
 
-          <SettingsCard title="同步" description="首次启动自动全量同步；之后按间隔增量同步">
+          <SettingsCard title="同步" description="首次启动自动全量同步；之后按间隔增量同步（一次同步所有已登录账号）">
             <div class="sync-row">
-              <BaseButton @click="doSync(false)" :disabled="syncing || !login.logged_in">立即同步</BaseButton>
-              <BaseButton variant="primary" @click="doSync(true)" :disabled="syncing || !login.logged_in">
+              <BaseButton @click="doSync(false)" :disabled="syncing || !anyLoggedIn">立即同步</BaseButton>
+              <BaseButton variant="primary" @click="doSync(true)" :disabled="syncing || !anyLoggedIn">
                 {{ syncing ? '同步中…' : '全量同步' }}
               </BaseButton>
             </div>
             <div class="status-lines">
-              <span>状态：{{ login.logged_in ? '已登录' : '未登录' }}</span>
+              <span>状态：{{ anyLoggedIn ? `已登录 ${loggedInCount} / ${accounts.length} 个账号` : '未登录' }}</span>
               <span v-if="sync.local_rows">本地已同步 {{ sync.local_rows }} 条记录</span>
               <span v-if="sync.last_sync_ms">最近同步：{{ fmtAgo(sync.last_sync_ms) }} · {{ fmtClock(sync.last_sync_ms) }}</span>
               <span :title="sync.source_note">新增：{{ sync.last_added || 0 }} 条 · 本地：{{ sync.local_rows || 0 }} 条</span>
@@ -67,7 +103,7 @@
             </div>
           </SettingsCard>
 
-          <SettingsCard title="当前额度">
+          <SettingsCard title="当前额度（主账号）" description="来自主账号的控制台额度，随账号与同步更新">
             <div v-if="quota" class="quota-lines">
               <span>计划：{{ quota.plan_name }}</span>
               <span>5 小时：{{ fmtUsd(quota.five_hour.used_micro_cents) }} / {{ fmtUsd(quota.five_hour.limit_micro_cents) }}</span>
@@ -82,21 +118,25 @@
         <!-- ── Tab：日志 ── -->
         <div v-show="activeTab === 'logs'" class="tab-pane">
           <SettingsCard title="逐条请求日志"
-            description="来自控制台 /request-logs，时间精确到秒；未登录时无数据" auto>
+            description="来自控制台 /request-logs，时间精确到秒；可按账号筛选，未登录时无数据" auto>
             <template #actions>
-              <DdSelect :options="logRangeOptions" v-model="logRange" />
+              <div class="logs-actions">
+                <DdSelect :options="logAccountOptions" v-model="logAccount" />
+                <DdSelect :options="logRangeOptions" v-model="logRange" />
+              </div>
             </template>
             <div class="log-table-wrap">
               <table class="log-table">
                 <thead>
                   <tr>
-                    <th>时间</th><th>模型</th><th class="num">输入</th><th class="num">输出</th>
+                    <th>时间</th><th>账号</th><th>模型</th><th class="num">输入</th><th class="num">输出</th>
                     <th class="num">缓存读</th><th class="num">缓存写</th><th class="num">耗时</th><th class="num">状态</th><th class="num">花费</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="(r, i) in reqLogs" :key="i">
                     <td>{{ fmtTime(r.started_at_ms) }}</td>
+                    <td class="ellipsis" :title="accountName(r.account_id)">{{ accountName(r.account_id) }}</td>
                     <td class="ellipsis" :title="r.model">{{ r.model }}</td>
                     <td class="num">{{ fmtTokens(r.input_tokens, convertUnits) }}</td>
                     <td class="num">{{ fmtTokens(r.output_tokens, convertUnits) }}</td>
@@ -106,7 +146,7 @@
                     <td class="num" :class="{ bad: r.status_code >= 400 }">{{ r.status_code || '-' }}</td>
                     <td class="num">{{ fmtUsd(r.cost_micro_cents) }}</td>
                   </tr>
-                  <tr v-if="!reqLogs.length"><td colspan="9" class="empty">{{ login.logged_in ? '暂无记录，请点「全量同步」' : '未登录，请到「账户」页登录' }}</td></tr>
+                  <tr v-if="!reqLogs.length"><td colspan="10" class="empty">{{ logEmptyText }}</td></tr>
                 </tbody>
               </table>
             </div>
@@ -229,6 +269,13 @@
         </div>
       </div>
     </div>
+
+    <AccountEditModal
+      :visible="showAccountEdit"
+      :account="editingAccount"
+      @save="onAccountSave"
+      @close="closeAccountEdit"
+    />
   </Teleport>
 </template>
 
@@ -241,6 +288,7 @@ import BaseToggle from './base/BaseToggle.vue'
 import SettingsCard from './SettingsCard.vue'
 import DdSelect from './DdSelect.vue'
 import ThemeIcon from './ThemeIcon.vue'
+import AccountEditModal from './AccountEditModal.vue'
 import { useTauri } from '../composables/useTauri'
 import { fmtUsd, fmtTokens, fmtDate, fmtAgo, fmtClock } from '../utils/format'
 import { version as pkgVersion } from '../../package.json'
@@ -252,7 +300,6 @@ const props = defineProps({
   visible: { type: Boolean, default: false },
   themeName: { type: String, default: 'dark' },
   convertUnits: { type: Boolean, default: false },
-  login: { type: Object, default: () => ({ logged_in: false, org_id: '' }) },
   autoLogin: { type: Boolean, default: false },
 })
 const emit = defineEmits(['close', 'update:themeName', 'update:convertUnits', 'changed', 'login-changed'])
@@ -274,6 +321,17 @@ const msg = ref('')
 const msgType = ref('')
 const quota = ref(null)
 const sync = ref({ syncing: false, last_sync_ms: 0, last_full_sync_ms: 0, last_error: null, local_rows: 0 })
+
+// 账号管理：列表来自 list_accounts（含每账号额度 / 本地条数 / 同步水位）
+const accounts = ref([])
+const acctMsg = ref('')
+const acctMsgType = ref('')
+const editingAccount = ref(null)
+const showAccountEdit = ref(false)
+const primaryAccount = computed(() => accounts.value.find((a) => a.is_primary) || null)
+const anyLoggedIn = computed(() => accounts.value.some((a) => a.logged_in))
+const loggedInCount = computed(() => accounts.value.filter((a) => a.logged_in).length)
+const showPrimaryLogin = computed(() => !primaryAccount.value || !primaryAccount.value.logged_in)
 
 const _loading = ref(true)
 
@@ -298,6 +356,94 @@ async function loadSync() {
   try { sync.value = (await invoke('get_sync_status')) || sync.value } catch {}
 }
 
+async function loadAccounts() {
+  try {
+    const r = await invoke('list_accounts')
+    accounts.value = r?.accounts || []
+  } catch { accounts.value = [] }
+}
+
+function accountName(id) {
+  if (!id) return '—'
+  return accounts.value.find((a) => a.id === id)?.name || id
+}
+
+// 主账号未登录 / 无账号时的登录入口
+function loginPrimary() { startLogin() }
+// 添加新账号：登录结果会新建一个账号
+function addAccount() { startLogin({ addNew: true }) }
+function reloginAccount(a) { startLogin({ accountId: a.id }) }
+
+function editAccount(a) {
+  editingAccount.value = { id: a.id, name: a.name, is_primary: !!a.is_primary, logged_in: !!a.logged_in, org_id: a.org_id || '', rows: a.rows || 0, last_sync_ms: a.last_sync_ms || 0 }
+  showAccountEdit.value = true
+}
+
+function closeAccountEdit() {
+  showAccountEdit.value = false
+  editingAccount.value = null
+}
+
+async function setPrimaryAccount(a) {
+  try {
+    await invoke('set_primary_account', { id: a.id })
+    acctMsg.value = `✓ 「${a.name}」已设为主账号`; acctMsgType.value = 'ok'
+    await loadAccounts()
+    await loadQuota()
+    emit('changed')
+  } catch (e) { acctMsg.value = String(e); acctMsgType.value = 'err' }
+}
+
+// AccountEditModal 只负责表单，保存动作在这里执行
+async function onAccountSave(payload) {
+  const a = editingAccount.value
+  closeAccountEdit()
+  if (!a) return
+  try {
+    const name = String(payload?.name || '').trim()
+    if (name && name !== a.name) await invoke('rename_account', { id: a.id, name })
+    if (payload?.setPrimary && !a.is_primary) await invoke('set_primary_account', { id: a.id })
+    acctMsg.value = '✓ 已保存'; acctMsgType.value = 'ok'
+    await loadAccounts()
+    await loadQuota()
+    emit('changed')
+  } catch (e) { acctMsg.value = String(e); acctMsgType.value = 'err' }
+}
+
+async function logoutAccount(a) {
+  clearInterval(loginPoll); loginPoll = null
+  try {
+    await invoke('logout', { accountId: a.id })
+    acctMsg.value = `✓ 已退出「${a.name}」`; acctMsgType.value = 'ok'
+    await loadAccounts()
+    await loadQuota()
+    emit('login-changed')
+    emit('changed')
+  } catch (e) { acctMsg.value = String(e); acctMsgType.value = 'err' }
+}
+
+// 删除前二次确认，并单独询问是否同时清空本地已同步数据
+async function removeAccount(a) {
+  if (!window.confirm(`确定删除账号「${a.name}」？此操作不可撤销。`)) return
+  const purge = window.confirm(
+    `是否同时清空「${a.name}」的本地已同步数据（${a.rows || 0} 条）？\n\n` +
+    `「确定」= 删除账号，并清空本地数据\n「取消」= 仅删除账号，保留本地数据`,
+  )
+  try {
+    const r = await invoke('remove_account', { id: a.id, purge })
+    acctMsg.value = purge
+      ? `✓ 已删除「${a.name}」，并清空 ${r?.purged || 0} 条本地数据`
+      : `✓ 已删除「${a.name}」（已保留本地数据）`
+    acctMsgType.value = 'ok'
+    await loadAccounts()
+    if (logAccount.value && !accounts.value.some((a) => a.id === logAccount.value)) logAccount.value = ''
+    await loadQuota()
+    await loadLogs()
+    emit('login-changed')
+    emit('changed')
+  } catch (e) { acctMsg.value = String(e); acctMsgType.value = 'err' }
+}
+
 // 基址 / 间隔：防抖自动保存
 let setTimer = null
 function scheduleSettings() {
@@ -320,44 +466,46 @@ async function doSync(full) {
   syncing.value = true
   try {
     const r = await invoke('sync_request_logs_now', { full })
-    msg.value = `✓ 已处理 ${r.rows} 条`; msgType.value = 'ok'
+    const accN = Array.isArray(r?.accounts) ? r.accounts.length : 0
+    const errN = Array.isArray(r?.errors) ? r.errors.length : 0
+    msg.value = `✓ 已处理 ${r?.rows || 0} 条${accN ? ` · ${accN} 个账号` : ''}${errN ? ` · ${errN} 个账号失败` : ''}`
+    msgType.value = errN ? 'err' : 'ok'
     await loadSync()
+    await loadAccounts()
     await loadLogs()
     emit('changed')
   } catch (e) { msg.value = String(e); msgType.value = 'err' }
   finally { syncing.value = false }
 }
 
-// ── 登录授权（状态统一走 msg）──
+// ── 登录授权（状态统一走 acctMsg）──
 let loginPoll = null
 
-async function startLogin() {
-  msg.value = '正在打开登录窗口…'; msgType.value = ''
+// opts.addNew = 添加新账号；opts.accountId = 重新登录指定账号；均空 = 主账号
+async function startLogin(opts = {}) {
+  const args = {}
+  if (opts.addNew) args.addNew = true
+  if (opts.accountId) args.accountId = opts.accountId
+  acctMsg.value = opts.addNew ? '正在打开登录窗口（添加账号）…' : '正在打开登录窗口…'
+  acctMsgType.value = ''
   try {
-    await invoke('open_login_window')
-    msg.value = '请在弹出窗口完成登录…'
+    await invoke('open_login_window', args)
+    acctMsg.value = '请在弹出窗口完成登录…'
     clearInterval(loginPoll)
     loginPoll = setInterval(async () => {
       try {
         const r = await invoke('capture_login')
         if (r?.ok) {
           clearInterval(loginPoll); loginPoll = null
-          msg.value = '✓ 授权成功'; msgType.value = 'ok'
+          acctMsg.value = '✓ 授权成功'; acctMsgType.value = 'ok'
+          await loadAccounts()
+          await loadQuota()
           emit('login-changed')
           emit('changed')
         }
       } catch {}
     }, 1500)
-  } catch (e) { msg.value = String(e); msgType.value = 'err' }
-}
-
-async function doLogout() {
-  clearInterval(loginPoll); loginPoll = null
-  try {
-    await invoke('logout')
-    msg.value = '✓ 已退出登录'; msgType.value = 'ok'
-    emit('login-changed')
-  } catch (e) { msg.value = String(e); msgType.value = 'err' }
+  } catch (e) { acctMsg.value = String(e); acctMsgType.value = 'err' }
 }
 
 watch(() => props.autoLogin, (v) => { if (v && props.visible) startLogin() })
@@ -391,12 +539,23 @@ const logRangeOptions = [
   { v: '30d', label: '近 30 天' },
   { v: 'all', label: '全部' },
 ]
+// 账号筛选：空 = 全部账号
+const logAccount = ref('')
+const logAccountOptions = computed(() => [
+  { v: '', label: '全部账号' },
+  ...accounts.value.map((a) => ({ v: a.id, label: a.name })),
+])
+const logEmptyText = computed(() => {
+  if (!accounts.value.length) return '暂无账号，请到「账户」页登录或添加账号'
+  if (!anyLoggedIn.value) return '未登录，请到「账户」页登录'
+  return '暂无记录，请到「账户」页点「全量同步」'
+})
 
 async function loadLogs() {
-  if (!props.login?.logged_in) { reqLogs.value = []; logTotal.value = 0; return }
+  if (!anyLoggedIn.value) { reqLogs.value = []; logTotal.value = 0; return }
   try {
     const r = await invoke('get_request_logs', {
-      range: logRange.value, page: logPage.value, pageSize: logPageSize,
+      range: logRange.value, accountId: logAccount.value, page: logPage.value, pageSize: logPageSize,
     })
     reqLogs.value = r?.rows || []
     logTotal.value = r?.total || 0
@@ -464,13 +623,16 @@ watch(autostart, async (v) => {
 })
 
 watch(logRange, () => { logPage.value = 1; loadLogs() })
+watch(logAccount, () => { logPage.value = 1; loadLogs() })
 
 watch(() => props.visible, async (v) => {
-  if (!v) return
+  if (!v) { closeAccountEdit(); return }
   _loading.value = true
   activeTab.value = 'account'
   msg.value = ''
+  acctMsg.value = ''
   await loadSettings()
+  await loadAccounts()
   await loadLogs()
   await loadModels()
   await loadRpm()
@@ -481,7 +643,8 @@ watch(() => props.visible, async (v) => {
 
 function switchTab(id) {
   activeTab.value = id
-  if (id === 'logs') loadLogs()
+  if (id === 'account') loadAccounts()
+  if (id === 'logs') { loadAccounts().then(loadLogs) }
   if (id === 'models') { loadModels(); loadRpm() }
 }
 
@@ -540,9 +703,29 @@ async function checkForUpdate() {
 .settings-row .input-wrap { flex: 0 0 320px; min-width: 0; }
 .form-col { display: flex; flex-direction: column; gap: 10px; width: 100%; }
 .sync-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.login-inline { display: flex; align-items: center; gap: 8px; }
-.login-state { font-size: 11px; color: var(--muted); background: var(--border); border-radius: 10px; padding: 2px 8px; }
-.login-state.on { color: var(--green); }
+.acct-head-actions { display: flex; align-items: center; gap: 8px; }
+.acct-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.acct-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+}
+.acct-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.acct-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); min-width: 0; }
+.acct-title { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-badge {
+  font-size: 10px; font-weight: 500; color: var(--blue); white-space: nowrap;
+  background: rgba(79,140,255,.12); border: 1px solid rgba(79,140,255,.30);
+  border-radius: 8px; padding: 0 6px; line-height: 1.6;
+}
+.acct-state { font-size: 10px; font-weight: 500; color: var(--muted); background: var(--border); border-radius: 8px; padding: 0 6px; line-height: 1.6; white-space: nowrap; }
+.acct-state.on { color: var(--green); }
+.acct-detail { font-size: 11px; color: var(--muted); }
+.acct-org { font-size: 10px; color: var(--muted); opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.acct-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex-shrink: 0; max-width: 60%; }
+.acct-actions .btn { padding: 4px 10px; font-size: 12px; }
+.acct-empty { padding: 14px 0; text-align: center; }
+.acct-empty .muted { font-size: 12px; color: var(--muted); }
+.logs-actions { display: flex; align-items: center; gap: 8px; }
 .status-lines, .quota-lines { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: 12px; color: var(--muted); }
 .quota-lines .muted { color: var(--muted); }
 .status-lines .err { color: #ff6b6b; }

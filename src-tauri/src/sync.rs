@@ -1,12 +1,13 @@
-//! 同步引擎：按固定间隔用登录会话拉取逐条请求日志并聚合成按天行，
-//! 同时刷新 Go 额度，并把状态通过 Tauri 事件推给前端。
+//! 同步引擎：按固定间隔用各账号的登录会话拉取逐条请求日志并聚合成按天行，
+//! 同时刷新各账号的 Go 额度，并把状态通过 Tauri 事件推给前端。
 //!
 //! 唯一数据源是控制台会话（`/request-logs`）：Service API Key 恒 403，
-//! 因此程序不再支持 Key 鉴权，未登录时同步直接跳过。
-//! 逐条日志的主键 `id` 保证重复同步是幂等的。
+//! 因此程序不再支持 Key 鉴权，未登录的账号直接跳过。
+//! 数据按 `account_id` 隔离，逐条日志主键 `(account_id, id)` 保证重复同步幂等。
 
-use crate::opencode::{Quota, SessionClient};
+use crate::opencode::Quota;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::RwLock;
 use tauri::{AppHandle, Emitter};
 
@@ -25,7 +26,8 @@ pub struct SyncStatus {
 }
 
 static STATUS: RwLock<Option<SyncStatus>> = RwLock::new(None);
-static QUOTA: RwLock<Option<Quota>> = RwLock::new(None);
+/// 每个账号的额度缓存（key = account_id）。
+static QUOTAS: RwLock<Option<HashMap<String, Quota>>> = RwLock::new(None);
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn read_status() -> SyncStatus {
@@ -47,48 +49,63 @@ pub fn status() -> SyncStatus {
     read_status()
 }
 
-pub fn quota() -> Option<Quota> {
-    QUOTA.read().unwrap_or_else(|e| e.into_inner()).clone()
+/// 某个账号的额度缓存。
+pub fn quota_for(account_id: &str) -> Option<Quota> {
+    QUOTAS
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(account_id))
+        .cloned()
 }
 
-pub fn set_quota(q: Option<Quota>) {
-    *QUOTA.write().unwrap_or_else(|e| e.into_inner()) = q;
+pub fn set_quota_for(account_id: &str, q: Option<Quota>) {
+    let mut guard = QUOTAS.write().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    match q {
+        Some(q) => {
+            map.insert(account_id.to_string(), q);
+        }
+        None => {
+            map.remove(account_id);
+        }
+    }
+}
+
+/// 某个账号的额度；`account_id` 为空时用主账号。
+pub fn quota_of(account_id: Option<&str>) -> Option<Quota> {
+    let id = match account_id {
+        Some(id) if !id.is_empty() => id.to_string(),
+        _ => crate::accounts::primary_id(),
+    };
+    quota_for(&id)
 }
 
 fn emit(app: &AppHandle, event: &str) {
     let _ = app.emit(event, ());
 }
 
-/// 从配置里的会话 Cookie 构造客户端（带浏览器 UA / Referer / x-org-id）；未登录时报错。
-pub fn session() -> Result<SessionClient, String> {
-    let cfg = crate::read_config_value();
-    let cookie = cfg
-        .get("session_cookie")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if cookie.is_empty() {
-        return Err("未登录 OpenCode".into());
-    }
-    let base = cfg
-        .get("base_url")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(crate::opencode::DEFAULT_BASE_URL)
-        .to_string();
-    let org = cfg
-        .get("org_id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_string());
-    Ok(SessionClient::new(cookie, base, org))
+/// 账号维度的 meta key，如 `last_requestlog_ms:org_xxx`。
+fn meta_key(base: &str, account_id: &str) -> String {
+    format!("{base}:{account_id}")
 }
 
-/// 刷新额度并广播（仅登录会话；未登录直接报错）。
-pub async fn refresh_quota(app: Option<&AppHandle>) -> Result<Quota, String> {
-    let q = session()?.go_status().await?;
-    set_quota(Some(q.clone()));
+fn account_meta(base: &str, account_id: &str) -> Option<String> {
+    crate::store::get_meta(&meta_key(base, account_id))
+}
+
+/// 该账号是否做过首同步。
+fn initialized(account_id: &str) -> bool {
+    account_meta("initialized", account_id).as_deref() == Some("1")
+}
+
+/// 刷新某个账号的额度并广播。
+pub async fn refresh_quota(
+    account: &crate::accounts::Account,
+    app: Option<&AppHandle>,
+) -> Result<Quota, String> {
+    let q = account.session()?.go_status().await?;
+    set_quota_for(&account.id, Some(q.clone()));
     if let Some(app) = app {
         emit(app, "quota-updated");
     }
@@ -98,6 +115,7 @@ pub async fn refresh_quota(app: Option<&AppHandle>) -> Result<Quota, String> {
 /// 拉取逐条日志分页，返回 (写入行数, 最大 started_at_ms)。
 async fn pull_request_log_pages(
     sc: &crate::opencode::SessionClient,
+    account_id: &str,
     since: i64,
     until: i64,
 ) -> Result<(usize, i64), String> {
@@ -121,7 +139,7 @@ async fn pull_request_log_pages(
                 max_started = l.started_at_ms;
             }
         }
-        total += crate::store::insert_request_logs(&page.items);
+        total += crate::store::insert_request_logs(&page.items, account_id);
         match page.next_cursor {
             Some(c) if !c.is_empty() => cursor = Some(c),
             _ => break,
@@ -130,20 +148,21 @@ async fn pull_request_log_pages(
     Ok((total, max_started))
 }
 
-/// 用登录会话拉取逐条日志并落库（cursor 分页），同时聚合到按天表；返回处理条数。
-/// 这是唯一的数据通道（Service Key 访问 /request-logs 恒 403）。
+/// 用某个账号的登录会话拉取逐条日志并落库（cursor 分页），同时聚合到按天表；
+/// 返回处理条数。这是唯一的数据通道（Service Key 访问 /request-logs 恒 403）。
 pub async fn sync_request_logs(
-    sc: &crate::opencode::SessionClient,
+    account: &crate::accounts::Account,
     full: bool,
     app: Option<&AppHandle>,
 ) -> Result<usize, String> {
+    let sc = account.session()?;
     let _guard = SYNC_LOCK.lock().await;
     write_status(|st| st.syncing = true);
     let now = chrono::Utc::now().timestamp_millis();
     let since = if full {
         now - 30 * 24 * 3600 * 1000
     } else {
-        crate::store::get_meta("last_requestlog_ms")
+        account_meta("last_requestlog_ms", &account.id)
             .and_then(|s| s.parse::<i64>().ok())
             .map(|v| (v - 60_000).max(0))
             .unwrap_or(now - 24 * 3600 * 1000)
@@ -159,7 +178,7 @@ pub async fn sync_request_logs(
     let mut max_started = since;
     let mut last_err: Option<String> = None;
     for w in windows {
-        match pull_request_log_pages(sc, w, now).await {
+        match pull_request_log_pages(&sc, &account.id, w, now).await {
             Ok((n, m)) => {
                 total = n;
                 max_started = m;
@@ -172,7 +191,7 @@ pub async fn sync_request_logs(
     if let Some(e) = last_err {
         write_status(|st| {
             st.syncing = false;
-            st.last_error = Some(e.clone());
+            st.last_error = Some(format!("{}：{e}", account.display_name()));
         });
         if let Some(app) = app {
             emit(app, "sync-status");
@@ -183,22 +202,27 @@ pub async fn sync_request_logs(
     // 聚合成按天行，供日志表 / 汇总使用
     let daily = crate::store::request_logs_to_daily();
     crate::store::upsert_rows(&daily);
-    crate::store::set_meta("last_requestlog_ms", &(max_started + 1).to_string());
-    crate::store::set_meta("last_sync_ms", &now.to_string());
-    crate::store::prune_request_logs(now - 40 * 24 * 3600 * 1000);
+    crate::store::set_meta(&meta_key("last_requestlog_ms", &account.id), &(max_started + 1).to_string());
+    crate::store::set_meta(&meta_key("last_sync_ms", &account.id), &now.to_string());
     if full {
-        crate::store::set_meta("last_full_sync_ms", &now.to_string());
-        crate::store::set_meta("initialized", "1");
+        crate::store::set_meta(&meta_key("last_full_sync_ms", &account.id), &now.to_string());
+        crate::store::set_meta(&meta_key("initialized", &account.id), "1");
+        write_status(|st| st.last_full_sync_ms = now);
     }
+    // 全局水位（界面展示用）取各账号里最新的
+    let newest = crate::store::get_meta("last_sync_ms")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    if now > newest {
+        crate::store::set_meta("last_sync_ms", &now.to_string());
+    }
+    crate::store::prune_request_logs(now - 40 * 24 * 3600 * 1000);
 
     let (count, cost) = crate::store::stats_summary();
     let (log_count, _, _) = crate::store::request_log_stats();
     write_status(|st| {
         st.syncing = false;
-        st.last_sync_ms = now;
-        if full {
-            st.last_full_sync_ms = now;
-        }
+        st.last_sync_ms = now.max(st.last_sync_ms);
         st.last_error = None;
         st.local_rows = count.max(log_count);
         st.total_cost_micro_cents = cost;
@@ -209,7 +233,7 @@ pub async fn sync_request_logs(
         emit(app, "sync-status");
     }
     Ok(total)
-}
+} 
 
 /// 从本地 meta 恢复状态（启动时调用一次）。
 pub fn restore_from_db() {
@@ -232,29 +256,32 @@ pub fn restore_from_db() {
     });
 }
 
-/// 后台循环：按配置的间隔刷新额度 + 用登录会话增量同步逐条日志。
-/// 启动时若从未全量同步过，先做一次全量。
+/// 后台循环：按配置的间隔逐个账号刷新额度 + 增量同步逐条日志。
+/// 启动时每个从未全量同步过的账号先做一次全量。
 pub fn spawn_loop(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let initialized = crate::store::get_meta("initialized").as_deref() == Some("1");
-        let _ = refresh_quota(Some(&app)).await;
-        if let Ok(sc) = session() {
-            let _ = sync_request_logs(&sc, !initialized, Some(&app)).await;
-            let _ = refresh_quota(Some(&app)).await;
+        for acc in crate::accounts::list() {
+            if !acc.logged_in() {
+                continue;
+            }
+            let _ = sync_request_logs(&acc, !initialized(&acc.id), Some(&app)).await;
+            let _ = refresh_quota(&acc, Some(&app)).await;
         }
 
         loop {
             let secs = crate::incremental_secs().max(2);
             tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-            match refresh_quota(Some(&app)).await {
-                Ok(_) => {}
-                Err(e) => write_status(|st| st.last_error = Some(e)),
-            }
-            match session() {
-                Ok(sc) => {
-                    let _ = sync_request_logs(&sc, false, Some(&app)).await;
+            for acc in crate::accounts::list() {
+                if !acc.logged_in() {
+                    continue;
                 }
-                Err(e) => write_status(|st| st.last_error = Some(e)),
+                match refresh_quota(&acc, Some(&app)).await {
+                    Ok(_) => {}
+                    Err(e) => write_status(|st| {
+                        st.last_error = Some(format!("{}：{e}", acc.display_name()))
+                    }),
+                }
+                let _ = sync_request_logs(&acc, false, Some(&app)).await;
             }
             emit(&app, "sync-status");
         }

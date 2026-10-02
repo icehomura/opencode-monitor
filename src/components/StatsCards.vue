@@ -87,7 +87,7 @@
     <section class="cards cards-4">
       <div class="card" v-for="m in meters" :key="m.key">
         <div class="card-title">
-          <span>{{ m.label }}</span>
+          <span class="title-group">{{ m.label }}<span class="primary-badge" :title="primaryTitle">主账号</span></span>
           <span class="card-sub" v-if="m.resets_at">重置于 {{ fmtDateTime(m.resets_at) }}</span>
         </div>
         <div class="card-body">
@@ -110,7 +110,7 @@
 
       <div class="card model-card">
         <div class="card-title model-title">
-          <span>当前模型请求限制</span>
+          <span class="title-group">当前模型请求限制<span class="primary-badge" :title="primaryTitle">主账号</span></span>
           <DdSelect
             v-if="selectedModel"
             class="model-dd"
@@ -154,7 +154,11 @@ const props = defineProps({
   windowStats: { type: Object, default: () => ({ requests: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, active_minutes: 0, window_minutes: 0 }) },
   minute: { type: Object, default: () => ({ input_tokens: 0, output_tokens: 0, cache_read_tokens: 0 }) },
   convertUnits: { type: Boolean, default: false },
+  primaryName: { type: String, default: '' },
 })
+
+// 第二行（额度卡 + 当前模型请求限制）只显示主账号数据
+const primaryTitle = computed(() => (props.primaryName ? `主账号：${props.primaryName}` : '主账号'))
 
 // ── 第一行：词元统计 ──
 const ws = computed(() => props.windowStats || {})
@@ -271,6 +275,12 @@ function reqText(used, limit) {
   color: var(--muted); font-size: 12px; margin-bottom: 10px; line-height: 1;
 }
 .card-sub { font-size: 10px; color: var(--muted); }
+.title-group { display: inline-flex; align-items: center; }
+.primary-badge {
+  margin-left: 6px; font-size: 10px; font-weight: 500; color: var(--blue);
+  background: rgba(79,140,255,.12); border: 1px solid rgba(79,140,255,.30);
+  border-radius: 8px; padding: 0 6px; line-height: 1.6; white-space: nowrap;
+}
 .card-body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
 
 .tok-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; width: 100%; }

@@ -2,6 +2,7 @@
   <div class="app-shell">
     <TitleBar
       :quota="stats.quota"
+      :primary-name="stats.primaryName"
       @open-settings="showSettings = true"
     />
     <Toolbar
@@ -23,6 +24,7 @@
         :windowStats="stats.windowStats"
         :minute="stats.minute"
         :convertUnits="convertUnits"
+        :primary-name="stats.primaryName"
       />
       <UsageChart
         :points="stats.series"
@@ -34,13 +36,12 @@
       :visible="showSettings"
       :themeName="themeName"
       :convertUnits="convertUnits"
-      :login="stats.login"
       :auto-login="autoLogin"
       @close="showSettings = false"
       @update:themeName="setTheme"
       @update:convertUnits="v => { convertUnits = v; setConvertUnits(v) }"
       @changed="refresh()"
-      @login-changed="refreshLogin"
+      @login-changed="onLoginChanged"
     />
     <CloseDialog
       :visible="showCloseDialog"
@@ -64,7 +65,7 @@ import { getConvertUnits, setConvertUnits } from './utils/format'
 import { useTauri } from './composables/useTauri'
 
 const { listen } = useTauri()
-const { stats, refresh, refreshQuota, refreshSync, refreshLogin, loadModelsOnce } = useMonitor()
+const { stats, refresh, refreshQuota, refreshSync, refreshLogin, refreshAccounts, loadModelsOnce } = useMonitor()
 const { themeName, setTheme } = useTheme()
 
 const showSettings = ref(false)
@@ -73,6 +74,12 @@ const autoLogin = ref(false)
 const convertUnits = ref(getConvertUnits())
 
 function onRangeChange(range) { refresh(range) }
+
+// 账号登录 / 退出后：刷新登录态与账号列表（主账号标注随之更新）
+function onLoginChanged() {
+  refreshLogin()
+  refreshAccounts()
+}
 
 function openLogin() {
   showSettings.value = true

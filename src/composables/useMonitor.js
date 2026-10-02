@@ -11,10 +11,21 @@ let seq = 0
  * Rust 侧通过 `quota-updated` / `sync-status` 事件通知刷新。
  */
 export function useMonitor() {
+  // 启动时恢复 range；custom 若缺少 from/to 则回落到默认预设
+  const savedRange = localStorage.getItem('ocm_range') || '1h'
+  const savedFrom = Number(localStorage.getItem('ocm_range_from') || 0)
+  const savedTo = Number(localStorage.getItem('ocm_range_to') || 0)
+  const hasSavedCustom = savedRange === 'custom' && savedFrom > 0 && savedTo > savedFrom
+
   const stats = reactive({
     loading: false,
-    range: localStorage.getItem('ocm_range') || '1h',
+    range: hasSavedCustom ? 'custom' : (savedRange === 'custom' ? '1h' : savedRange),
+    rangeFrom: hasSavedCustom ? savedFrom : 0,
+    rangeTo: hasSavedCustom ? savedTo : 0,
     login: { logged_in: false, org_id: '' },
+    accounts: [],
+    primary: '',
+    primaryName: '',
     models: [],
     defaultModelId: '',
     windowStats: { requests: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, active_minutes: 0, window_minutes: 0 },
@@ -42,6 +53,21 @@ export function useMonitor() {
     try {
       stats.login = (await invoke('login_status')) || { logged_in: false, org_id: '' }
     } catch {}
+  }
+
+  // 账号列表：标题栏 / 第二行卡片只用主账号；图表与第一行是全部账号聚合
+  async function refreshAccounts() {
+    try {
+      const r = await invoke('list_accounts')
+      const list = r?.accounts || []
+      stats.accounts = list
+      stats.primary = r?.primary || ''
+      stats.primaryName = list.find((a) => a.id === stats.primary)?.name || ''
+    } catch {
+      stats.accounts = []
+      stats.primary = ''
+      stats.primaryName = ''
+    }
   }
 
   async function refreshQuota() {
@@ -144,8 +170,9 @@ export function useMonitor() {
     refreshQuota()
     refreshSync()
     refreshLogin()
+    refreshAccounts()
     refreshModels()
   }
 
-  return { stats, refresh, refreshQuota, refreshSync, refreshLogin, loadModelsOnce, refreshModels }
+  return { stats, refresh, refreshQuota, refreshSync, refreshLogin, refreshAccounts, loadModelsOnce, refreshModels }
 }
