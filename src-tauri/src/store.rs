@@ -322,22 +322,24 @@ impl SeriesPoint {
     }
 }
 
-pub fn request_series(since_ms: i64, bucket_ms: i64) -> Vec<SeriesPoint> {
+pub fn request_series(since_ms: i64, until_ms: Option<i64>, bucket_ms: i64) -> Vec<SeriesPoint> {
     let bucket_ms = bucket_ms.max(1000);
     let mut out = Vec::new();
     with_conn(|conn| {
         let mut stmt = match conn.prepare(
-            "SELECT (started_at_ms/?2)*?2 AS b, COUNT(*),
+            "SELECT (started_at_ms/?3)*?3 AS b, COUNT(*),
                     COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END),0),
                     COALESCE(SUM(input_tokens),0),
                     COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read_tokens),0),
                     COALESCE(SUM(cost_micro_cents),0)
-             FROM request_log WHERE started_at_ms >= ?1 GROUP BY b ORDER BY b ASC",
+             FROM request_log
+             WHERE started_at_ms >= ?1 AND (?2 IS NULL OR started_at_ms < ?2)
+             GROUP BY b ORDER BY b ASC",
         ) {
             Ok(s) => s,
             Err(_) => return,
         };
-        let mapped = stmt.query_map(params![since_ms, bucket_ms], |row| {
+        let mapped = stmt.query_map(params![since_ms, until_ms, bucket_ms], |row| {
             Ok(SeriesPoint {
                 ts_ms: row.get(0)?,
                 requests: row.get(1)?,
@@ -548,8 +550,9 @@ pub struct WindowStats {
 }
 
 /// 指定窗口内的汇总（用于「词元数明细 / 时间窗口内」两张卡）。
-pub fn window_stats(since_ms: i64) -> WindowStats {
+pub fn window_stats(since_ms: i64, until_ms: Option<i64>) -> WindowStats {
     let now = chrono::Utc::now().timestamp_millis();
+    let end = until_ms.unwrap_or(now);
     let mut out = WindowStats::default();
     with_conn(|conn| {
         let (req, input, output, cache, active, min_started): (i64, i64, i64, i64, i64, i64) = conn
@@ -558,13 +561,14 @@ pub fn window_stats(since_ms: i64) -> WindowStats {
                         COALESCE(SUM(cache_read_tokens),0),
                         COUNT(DISTINCT (started_at_ms/60000)),
                         COALESCE(MIN(started_at_ms),0)
-                 FROM request_log WHERE (?1 = 0 OR started_at_ms >= ?1)",
-                params![since_ms],
+                 FROM request_log
+                 WHERE (?1 = 0 OR started_at_ms >= ?1) AND (?2 IS NULL OR started_at_ms < ?2)",
+                params![since_ms, until_ms],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
             )
             .unwrap_or((0, 0, 0, 0, 0, 0));
         let start = if since_ms > 0 { since_ms } else { min_started };
-        let span = if start > 0 { (now - start).max(0) } else { 0 };
+        let span = if start > 0 { (end - start).max(0) } else { 0 };
         out = WindowStats {
             requests: req,
             input_tokens: input,

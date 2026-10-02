@@ -102,15 +102,32 @@ export function useMonitor() {
     } catch {}
   }
 
-  async function refresh(range) {
-    if (range) {
-      stats.range = range
-      localStorage.setItem('ocm_range', range)
+  function persistRange() {
+    localStorage.setItem('ocm_range', stats.range)
+    if (stats.range === 'custom') {
+      localStorage.setItem('ocm_range_from', String(stats.rangeFrom))
+      localStorage.setItem('ocm_range_to', String(stats.rangeTo))
     }
+  }
+
+  async function refresh(range) {
+    if (range && typeof range === 'object') {
+      if (range.fromMs > 0 && range.toMs > range.fromMs) {
+        stats.range = 'custom'
+        stats.rangeFrom = range.fromMs
+        stats.rangeTo = range.toMs
+      }
+    } else if (range) {
+      stats.range = range
+    }
+    if (range) persistRange()
     const current = ++seq
     stats.loading = true
     try {
-      const d = await invoke('get_dashboard', { range: stats.range })
+      const args = stats.range === 'custom'
+        ? { range: 'custom', sinceMs: stats.rangeFrom, untilMs: stats.rangeTo }
+        : { range: stats.range }
+      const d = await invoke('get_dashboard', args)
       if (current !== seq) return
       stats.summary = d?.summary || null
       stats.series = d?.series || []

@@ -315,12 +315,28 @@ fn range_since(range: &str) -> i64 {
         _ => 0,
     }
 }
-/// 仪表盘数据：本地逐条日志按桶聚合（请求 / 异常 / 输出 / 输入 / 缓存）
+
+/// 仪表盘数据：本地逐条日志按桶聚合（请求 / 异常 / 输出 / 输入 / 缓存）。
+/// `range = "custom"` 时用 `since_ms` / `until_ms`（毫秒，左闭右开）指定区间。
 #[tauri::command]
-async fn get_dashboard(range: String) -> serde_json::Value {
+async fn get_dashboard(
+    range: String,
+    since_ms: Option<i64>,
+    until_ms: Option<i64>,
+) -> serde_json::Value {
     let (local_rows, local_cost) = store::stats_summary();
-    let since = range_since(&range);
-    let pts = store::request_series(since, BUCKET_MS);
+    let custom = range == "custom";
+    let since = if custom {
+        since_ms.unwrap_or(0).max(0)
+    } else {
+        range_since(&range)
+    };
+    let until = if custom {
+        until_ms.filter(|u| *u > since)
+    } else {
+        None
+    };
+    let pts = store::request_series(since, until, BUCKET_MS);
     let mut series: Vec<serde_json::Value> = pts
         .iter()
         .map(|p| {
@@ -379,7 +395,7 @@ async fn get_dashboard(range: String) -> serde_json::Value {
         "fallback": fallback,
         "series": series,
         "summary": serde_json::Value::Null,
-        "window_stats": store::window_stats(since),
+        "window_stats": store::window_stats(since, until),
         "minute": store::current_minute_tokens(),
         "local_rows": local_rows,
         "local_cost_micro_cents": local_cost,

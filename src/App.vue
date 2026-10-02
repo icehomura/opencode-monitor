@@ -7,6 +7,8 @@
     <Toolbar
       :sync="stats.sync"
       :range="stats.range"
+      :range-from="stats.rangeFrom"
+      :range-to="stats.rangeTo"
       :login="stats.login"
       @range-change="onRangeChange"
       @sync-done="refresh()"
