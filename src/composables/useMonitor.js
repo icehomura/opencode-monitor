@@ -16,6 +16,7 @@ export function useMonitor() {
   const savedFrom = Number(localStorage.getItem('ocm_range_from') || 0)
   const savedTo = Number(localStorage.getItem('ocm_range_to') || 0)
   const hasSavedCustom = savedRange === 'custom' && savedFrom > 0 && savedTo > savedFrom
+  const savedModelsAccount = localStorage.getItem('ocm_models_account') || ''
 
   const stats = reactive({
     loading: false,
@@ -88,15 +89,18 @@ export function useMonitor() {
   }
 
   // 模型额度：启动时加载一次并确定默认选中项；之后只刷新用量数字，
-  // 永远不改变默认选中的模型（即使用量顺序变了）。
+  // 永远不改变默认选中的模型（即使用量顺序变了）。accountId 为空 = 全部账号。
   let modelsLoaded = false
   let lastModelsRefresh = 0
+  async function fetchModels() {
+    const r = await invoke('get_models', { accountId: stats.modelsAccount || '' })
+    return r?.models || []
+  }
   async function loadModelsOnce() {
     if (modelsLoaded) return
     modelsLoaded = true
     try {
-      const r = await invoke('get_models')
-      const list = r?.models || []
+      const list = await fetchModels()
       stats.models = list
       let best = ''
       let bestN = -1
@@ -118,8 +122,19 @@ export function useMonitor() {
     if (now - lastModelsRefresh < 5000) return
     lastModelsRefresh = now
     try {
-      const list = (await invoke('get_models'))?.models || []
+      const list = await fetchModels()
       if (list.length || stats.models.length) stats.models = list
+    } catch {}
+  }
+
+  // 切换「当前模型请求限制」所属账号：持久化后立刻重拉（空串 = 全部账号）
+  async function setModelsAccount(id) {
+    stats.modelsAccount = id || ''
+    localStorage.setItem('ocm_models_account', stats.modelsAccount)
+    modelsLoaded = true
+    lastModelsRefresh = Date.now()
+    try {
+      stats.models = await fetchModels()
     } catch {}
   }
 
@@ -169,5 +184,5 @@ export function useMonitor() {
     refreshModels()
   }
 
-  return { stats, refresh, refreshQuota, refreshSync, refreshLogin, refreshAccounts, loadModelsOnce, refreshModels }
+  return { stats, refresh, refreshQuota, refreshSync, refreshLogin, refreshAccounts, loadModelsOnce, refreshModels, setModelsAccount }
 }

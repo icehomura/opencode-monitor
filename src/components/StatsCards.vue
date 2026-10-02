@@ -142,7 +142,7 @@
               </div>
             </div>
           </template>
-          <div v-else class="plan-empty">{{ models.length ? '加载中…' : '暂无模型用量（登录后同步逐条日志）' }}</div>
+          <div v-else class="plan-empty">{{ models.length ? '请选择模型' : '暂无模型用量（登录后同步逐条日志）' }}</div>
         </div>
       </div>
     </section>
@@ -244,7 +244,19 @@ watch(
   { immediate: true },
 )
 const modelOptions = computed(() => props.models.map((m) => ({ v: m.id, label: m.name || m.id })))
-const selectedModel = computed(() => props.models.find((m) => m.id === selectedId.value) || props.models[0] || null)
+const selectedModel = computed(() => props.models.find((m) => m.id === selectedId.value) || null)
+
+// 账号下拉：'' = 全部账号（用量合计，上限按各账号套餐求和）
+const accountId = ref(props.modelsAccount || '')
+watch(() => props.modelsAccount, (v) => { accountId.value = v || '' })
+const accountOptions = computed(() => [
+  { v: '', label: '全部账号' },
+  ...props.accounts.map((a) => ({ v: a.id, label: a.name || a.id })),
+])
+function onAccountChange(v) {
+  accountId.value = v || ''
+  emit('models-account-change', accountId.value)
+}
 
 function usedOf(w) { return Number(selectedModel.value?.usage?.[w.key]?.requests || 0) }
 function limitOf(w) { const l = selectedModel.value?.limit; return l ? Number(l[w.limitKey]) : null }
@@ -318,9 +330,11 @@ function reqText(used, limit) {
 .plan-empty { font-size: 12px; color: var(--muted); }
 
 .model-card { justify-content: flex-start; }
-.model-title { align-items: center; margin-bottom: 12px; }
-.model-dd { flex-shrink: 0; }
-.model-dd :deep(.dd-btn) { padding: 3px 8px; font-size: 11px; min-width: 0; }
+.model-title { align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.title-selects { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.card-dd { flex-shrink: 0; }
+.card-dd :deep(.dd-btn) { padding: 3px 8px; font-size: 11px; min-width: 0; max-width: 140px; }
+.card-dd :deep(.dd-label) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-body { gap: 12px; justify-content: center; }
 .req-rows { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .req-row { display: grid; grid-template-columns: 46px 1fr auto; align-items: center; gap: 8px; }

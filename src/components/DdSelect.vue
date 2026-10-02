@@ -1,7 +1,7 @@
 <template>
   <div class="dd" :class="{ open: isOpen }" ref="ddRef">
     <button type="button" class="dd-btn" @click.stop="toggle">
-      <span class="dd-label">{{ selectedLabel }}</span>
+      <span class="dd-label" :class="{ 'dd-placeholder': !matched }">{{ selectedLabel }}</span>
       <svg class="dd-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="m6 9 6 6 6-6" />
@@ -32,6 +32,7 @@ const props = defineProps({
   options: { type: Array, required: true },
   modelValue: { type: String, default: '' },
   block: { type: Boolean, default: false },
+  placeholder: { type: String, default: '' },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -39,9 +40,10 @@ const emit = defineEmits(['update:modelValue'])
 const isOpen = ref(false)
 const ddRef = ref(null)
 
+const matched = computed(() => props.options.some(o => o.v === props.modelValue))
 const selectedLabel = computed(() => {
   const found = props.options.find(o => o.v === props.modelValue)
-  return found ? found.label : ''
+  return found ? found.label : (props.placeholder || '')
 })
 
 function toggle() { isOpen.value = !isOpen.value }
@@ -85,6 +87,7 @@ onBeforeUnmount(() => {
 .dd-btn:hover { filter: brightness(1.2); }
 .dd.open .dd-btn { border-color: var(--blue); filter: none; }
 .dd-chevron { transition: transform .15s ease; color: var(--muted); flex-shrink: 0; }
+.dd-placeholder { color: var(--muted); }
 .dd.open .dd-chevron { transform: rotate(180deg); }
 .dd-list {
   position: absolute; top: calc(100% + 4px); right: 0;

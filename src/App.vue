@@ -72,7 +72,7 @@ import { getConvertUnits, setConvertUnits } from './utils/format'
 import { useTauri } from './composables/useTauri'
 
 const { listen, invoke } = useTauri()
-const { stats, refresh, refreshQuota, refreshSync, refreshLogin, refreshAccounts, loadModelsOnce } = useMonitor()
+const { stats, refresh, refreshQuota, refreshSync, refreshLogin, refreshAccounts, loadModelsOnce, setModelsAccount } = useMonitor()
 const { themeName, setTheme } = useTheme()
 
 const showSettings = ref(false)
