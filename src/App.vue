@@ -48,6 +48,11 @@
       @close="showCloseDialog = false"
       @choice="onCloseChoice"
     />
+    <DisclaimerModal
+      :visible="showDisclaimer"
+      @accept="acceptDisclaimer"
+      @decline="declineDisclaimer"
+    />
   </div>
 </template>
 
@@ -59,12 +64,13 @@ import StatsCards from './components/StatsCards.vue'
 import UsageChart from './components/UsageChart.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import CloseDialog from './components/CloseDialog.vue'
+import DisclaimerModal from './components/DisclaimerModal.vue'
 import { useMonitor } from './composables/useMonitor'
 import { useTheme } from './composables/useTheme'
 import { getConvertUnits, setConvertUnits } from './utils/format'
 import { useTauri } from './composables/useTauri'
 
-const { listen } = useTauri()
+const { listen, invoke } = useTauri()
 const { stats, refresh, refreshQuota, refreshSync, refreshLogin, refreshAccounts, loadModelsOnce } = useMonitor()
 const { themeName, setTheme } = useTheme()
 
@@ -74,6 +80,16 @@ const autoLogin = ref(false)
 const convertUnits = ref(getConvertUnits())
 
 function onRangeChange(range) { refresh(range) }
+
+// 首次启动的「使用须知」：确认一次即可（记住在本地）
+const showDisclaimer = ref(localStorage.getItem('ocm_tos_ack') !== '1')
+function acceptDisclaimer() {
+  localStorage.setItem('ocm_tos_ack', '1')
+  showDisclaimer.value = false
+}
+function declineDisclaimer() {
+  try { invoke('quit_app') } catch {}
+}
 
 // 账号登录 / 退出后：刷新登录态与账号列表（主账号标注随之更新）
 function onLoginChanged() {

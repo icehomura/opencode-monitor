@@ -32,11 +32,16 @@
             <template #actions>
               <div class="acct-head-actions">
                 <BaseButton v-if="showPrimaryLogin" @click="loginPrimary">登录主账号</BaseButton>
-                <BaseButton variant="primary" @click="addAccount">
+                <BaseButton variant="primary" @click="addAccount" :disabled="!ownAccountAck">
                   <span style="margin-right:4px">+</span> 添加账号
                 </BaseButton>
               </div>
             </template>
+
+            <label class="acct-ack">
+              <input type="checkbox" v-model="ownAccountAck" />
+              <span>添加的账号需为<strong>你本人拥有或已获授权访问</strong>；本工具只读展示用量，不做绕过或自动切号。</span>
+            </label>
 
             <div v-if="accounts.length" class="acct-list">
               <div v-for="a in accounts" :key="a.id" class="acct-item">
@@ -265,6 +270,7 @@
         </div><!-- /modal-body -->
 
         <div class="modal-footer">
+          <span class="footer-decl">只读同步工具：不绕过任何额度 / 限流 / 计费限制，不自动切换账号，不采集提示词与模型输出，不上传数据</span>
           <span class="footer-hint">配置修改立即生效</span>
         </div>
       </div>
@@ -316,6 +322,9 @@ const tabs = [
 // ── 账户 ──
 const baseUrl = ref('https://opencode.ai/console/api')
 const intervalSecs = ref(30)
+// 「添加账号」前的一次性确认（只添加自己拥有 / 已获授权的账号）
+const ownAccountAck = ref(localStorage.getItem('ocm_own_account_ack') === '1')
+watch(ownAccountAck, (v) => localStorage.setItem('ocm_own_account_ack', v ? '1' : '0'))
 const syncing = ref(false)
 const msg = ref('')
 const msgType = ref('')
@@ -371,7 +380,10 @@ function accountName(id) {
 // 主账号未登录 / 无账号时的登录入口
 function loginPrimary() { startLogin() }
 // 添加新账号：登录结果会新建一个账号
-function addAccount() { startLogin({ addNew: true }) }
+function addAccount() {
+  if (!ownAccountAck.value) { acctMsg.value = '请先勾选上方确认（只添加自己拥有 / 已获授权的账号）'; acctMsgType.value = 'err'; return }
+  startLogin({ addNew: true })
+}
 function reloginAccount(a) { startLogin({ accountId: a.id }) }
 
 function editAccount(a) {
@@ -704,6 +716,12 @@ async function checkForUpdate() {
 .form-col { display: flex; flex-direction: column; gap: 10px; width: 100%; }
 .sync-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .acct-head-actions { display: flex; align-items: center; gap: 8px; }
+.acct-ack {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0 0 10px;
+  font-size: 11px; line-height: 1.5; color: var(--muted); cursor: pointer;
+}
+.acct-ack input { margin-top: 2px; flex-shrink: 0; }
+.acct-ack strong { color: var(--text); font-weight: 600; }
 .acct-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .acct-item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -770,5 +788,6 @@ async function checkForUpdate() {
 .theme-check { position: absolute; top: 8px; right: 8px; color: var(--blue); }
 
 .modal-footer { display: flex; align-items: center; justify-content: flex-end; gap: 16px; padding-top: 14px; margin-top: 12px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.footer-decl { margin-right: auto; font-size: 11px; color: var(--muted); opacity: .85; }
 .footer-hint { font-size: 12px; color: var(--muted); }
 </style>

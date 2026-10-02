@@ -171,6 +171,12 @@ fn get_sync_status() -> serde_json::Value {
     json!(sync::status())
 }
 
+/// 退出程序（免责声明里选「不同意」时直接关闭）。
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 /// 立即同步：逐个账号拉取逐条日志（需要先完成 WebView 授权）。
 #[tauri::command]
 async fn sync_request_logs_now(full: bool) -> Result<serde_json::Value, String> {
@@ -985,6 +991,7 @@ fn main() {
             save_settings,
             get_quota,
             get_sync_status,
+            quit_app,
             get_dashboard,
             get_close_action,
             set_close_action,
