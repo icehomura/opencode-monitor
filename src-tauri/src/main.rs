@@ -355,7 +355,7 @@ fn range_bucket(range: &str) -> (i64, i64, &'static str) {
             .map(|d| d.timestamp_millis())
     };
     match range {
-        "1h" => (now - 3_600_000, 10_000, "second"),
+        "1h" => (now - 3_600_000, 60_000, "minute"),
         "5h" => (
             q.as_ref()
                 .and_then(|q| parse(&q.five_hour.starts_at))

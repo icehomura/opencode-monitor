@@ -45,7 +45,6 @@ function labelOf(v) {
   if (Number.isNaN(d.getTime())) return String(v)
   const p = (n) => String(n).padStart(2, '0')
   switch (props.granularity) {
-    case 'second': return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
     case 'minute': return `${p(d.getHours())}:${p(d.getMinutes())}`
     case 'hour': return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:00`
     default: return `${p(d.getMonth() + 1)}-${p(d.getDate())}`
