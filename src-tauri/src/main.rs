@@ -344,9 +344,14 @@ fn local_midnight_ms() -> i64 {
     }
 }
 
-/// 返回 (窗口起点, 分桶大小, 粒度)。
+/// 图表分桶大小：所有时间窗口统一按分钟聚合。
+const BUCKET_MS: i64 = 60_000;
+/// 图表 X 轴刻度粒度（与 `BUCKET_MS` 对应），只影响前端标签格式。
+const GRANULARITY: &str = "minute";
+
+/// 时间窗口起点（毫秒）。
 /// 「当前5小时 / 本周 / 本月」的起点 = 官方重置时间往前推对应时长（即 meter.startsAt）。
-fn range_bucket(range: &str) -> (i64, i64, &'static str) {
+fn range_since(range: &str) -> i64 {
     let now = chrono::Utc::now().timestamp_millis();
     let q = sync::quota();
     let parse = |s: &Option<String>| -> Option<i64> {
@@ -355,39 +360,29 @@ fn range_bucket(range: &str) -> (i64, i64, &'static str) {
             .map(|d| d.timestamp_millis())
     };
     match range {
-        "1h" => (now - 3_600_000, 60_000, "minute"),
-        "5h" => (
-            q.as_ref()
-                .and_then(|q| parse(&q.five_hour.starts_at))
-                .unwrap_or(now - 5 * 3_600_000),
-            60_000,
-            "minute",
-        ),
-        "today" => (local_midnight_ms(), 60_000, "minute"),
-        "week" => (
-            q.as_ref()
-                .and_then(|q| parse(&q.week.starts_at))
-                .unwrap_or(now - 7 * 24 * 3_600_000),
-            60_000,
-            "minute",
-        ),
-        "month" => (
-            q.as_ref()
-                .and_then(|q| parse(&q.starts_at))
-                .unwrap_or(now - 30 * 24 * 3_600_000),
-            60_000,
-            "minute",
-        ),
-        _ => (0, 60_000, "minute"),
+        "1h" => now - 3_600_000,
+        "5h" => q
+            .as_ref()
+            .and_then(|q| parse(&q.five_hour.starts_at))
+            .unwrap_or(now - 5 * 3_600_000),
+        "today" => local_midnight_ms(),
+        "week" => q
+            .as_ref()
+            .and_then(|q| parse(&q.week.starts_at))
+            .unwrap_or(now - 7 * 24 * 3_600_000),
+        "month" => q
+            .as_ref()
+            .and_then(|q| parse(&q.starts_at))
+            .unwrap_or(now - 30 * 24 * 3_600_000),
+        _ => 0,
     }
 }
-
 /// 仪表盘数据：本地逐条日志按桶聚合（请求 / 异常 / 输出 / 输入 / 缓存）
 #[tauri::command]
 async fn get_dashboard(range: String) -> serde_json::Value {
     let (local_rows, local_cost) = store::stats_summary();
-    let (since, bucket, granularity) = range_bucket(&range);
-    let pts = store::request_series(since, bucket);
+    let since = range_since(&range);
+    let pts = store::request_series(since, BUCKET_MS);
     let mut series: Vec<serde_json::Value> = pts
         .iter()
         .map(|p| {
@@ -439,7 +434,7 @@ async fn get_dashboard(range: String) -> serde_json::Value {
     json!({
         "configured": true,
         "range": range,
-        "granularity": granularity,
+        "granularity": GRANULARITY,
         "fallback": fallback,
         "series": series,
         "summary": serde_json::Value::Null,
