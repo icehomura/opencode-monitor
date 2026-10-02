@@ -5,7 +5,8 @@
       <template v-if="quota">
         <span class="plan-badge">{{ quota.plan_name }}</span>
         <span class="plan-expiry">到期 {{ fmtDate(quota.ends_at) }}</span>
-        <span v-if="quota.cancel_at_period_end" class="plan-warn">到期后不再续费</span>
+        <span v-if="quota.cancel_at_period_end" class="plan-warn">到期后不自动续费</span>
+        <span v-else class="plan-renew">到期后自动续费</span>
         <span v-if="estimate" class="plan-estimate" :title="estimateTitle">预估可用 {{ estimate }}</span>
       </template>
       <span class="plan-badge muted" v-else>未配置</span>
@@ -190,6 +191,11 @@ onMounted(() => {
 .plan-warn {
   font-size: 11px; color: #f0a020; white-space: nowrap;
   background: rgba(240,160,32,.12); border: 1px solid rgba(240,160,32,.35);
+  border-radius: 10px; padding: 1px 8px;
+}
+.plan-renew {
+  font-size: 11px; color: var(--green); white-space: nowrap;
+  background: rgba(53,208,165,.10); border: 1px solid rgba(53,208,165,.28);
   border-radius: 10px; padding: 1px 8px;
 }
 .plan-estimate {
