@@ -25,6 +25,29 @@ fn num(v: &Value, key: &str) -> i64 {
     }
 }
 
+/// 取浮点数（字符串数字也兼容）。
+fn num_f64(v: &Value, key: &str) -> f64 {
+    match v.get(key) {
+        Some(Value::String(s)) => s.trim().parse::<f64>().unwrap_or(0.0),
+        Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
+/// `/request-logs` 的 `cost` 是**美元浮点**（实测如 `0.00113096`），入库统一成 microCents。
+/// 1 美元 = 1e8 microCents（与前端 `fmtUsd` 一致）；若某天改回 microCents 整数，按量级兜底。
+fn cost_micro_cents(v: &Value) -> i64 {
+    let raw = num_f64(v, "cost");
+    if raw <= 0.0 {
+        return 0;
+    }
+    if raw >= 100.0 {
+        raw.round() as i64
+    } else {
+        (raw * 1e8).round() as i64
+    }
+}
+
 fn s(v: &Value, key: &str) -> String {
     v.get(key)
         .and_then(|x| x.as_str())
@@ -154,6 +177,21 @@ mod tests {
         assert_eq!(num(&v, "b"), 42);
         assert_eq!(num(&v, "missing"), 0);
     }
+
+    /// `/request-logs` 的 cost 是美元浮点：必须换算成 microCents，否则金额全是 0。
+    #[test]
+    fn request_log_cost_is_parsed_as_usd() {
+        let log = RequestLog::from_json(&serde_json::json!({
+            "id": "x", "cost": 0.00113096
+        }));
+        assert_eq!(log.cost_micro_cents, 113_096, "0.00113096 美元 = 113096 microCents");
+        let stringy = RequestLog::from_json(&serde_json::json!({"cost": "0.5"}));
+        assert_eq!(stringy.cost_micro_cents, 50_000_000, "字符串金额也要认");
+        let micro = RequestLog::from_json(&serde_json::json!({"cost": 113096}));
+        assert_eq!(micro.cost_micro_cents, 113_096, "已是 microCents 时按量级兜底");
+        let none = RequestLog::from_json(&serde_json::json!({"cost": null}));
+        assert_eq!(none.cost_micro_cents, 0);
+    }
 }
 
 
@@ -221,8 +259,7 @@ impl RequestLog {
             cache_read_tokens: num(v, "cacheReadTokens"),
             cache_write_tokens: num(v, "cacheWriteTokens"),
             cache_write_1h_tokens: num(v, "cacheWrite1hTokens"),
-            // 控制台统一用 microCents；若某天变成美元可在此换算
-            cost_micro_cents: num(v, "cost"),
+            cost_micro_cents: cost_micro_cents(v),
             status_code: num(v, "statusCode"),
         }
     }
