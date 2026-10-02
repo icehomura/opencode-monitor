@@ -182,26 +182,16 @@ onMounted(() => {
 }
 .titlebar-brand { display: flex; align-items: center; gap: 10px; }
 .titlebar-brand strong { font-size: 14px; font-weight: 600; color: var(--text); }
-.plan-badge {
-  font-size: 11px; color: var(--green); background: var(--border);
-  padding: 1px 8px; border-radius: 10px; line-height: 1.6; white-space: nowrap;
+/* 标题栏的胶囊统一形态：无描边、同字号/内边距/圆角（与「计划」胶囊一致），只靠文字色与底色区分状态 */
+.plan-badge, .plan-warn, .plan-renew, .plan-estimate {
+  font-size: 11px; white-space: nowrap; border: none;
+  padding: 1px 8px; border-radius: 10px; line-height: 1.6;
 }
+.plan-badge { color: var(--green); background: var(--border); }
 .plan-badge.muted { color: var(--muted); }
 .plan-expiry { font-size: 11px; color: var(--muted); white-space: nowrap; }
-.plan-warn {
-  font-size: 11px; color: #f0a020; white-space: nowrap;
-  background: rgba(240,160,32,.12); border: 1px solid rgba(240,160,32,.35);
-  border-radius: 10px; padding: 1px 8px;
-}
-.plan-renew {
-  font-size: 11px; color: var(--green); white-space: nowrap;
-  background: rgba(53,208,165,.10); border: 1px solid rgba(53,208,165,.28);
-  border-radius: 10px; padding: 1px 8px;
-}
-.plan-estimate {
-  font-size: 11px; color: var(--blue); white-space: nowrap;
-  background: rgba(79,140,255,.12); border: 1px solid rgba(79,140,255,.30);
-  border-radius: 10px; padding: 1px 8px;
-}
+.plan-warn { color: #f0a020; background: rgba(240, 160, 32, .14); }
+.plan-renew { color: var(--green); background: rgba(53, 208, 165, .14); }
+.plan-estimate { color: var(--blue); background: rgba(79, 140, 255, .14); }
 .titlebar-actions { display: flex; height: 100%; }
 </style>
