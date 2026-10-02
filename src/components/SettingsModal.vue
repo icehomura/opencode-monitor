@@ -32,13 +32,13 @@
             <template #actions>
               <div class="acct-head-actions">
                 <BaseButton v-if="showPrimaryLogin" @click="loginPrimary">登录主账号</BaseButton>
-                <BaseButton variant="primary" @click="addAccount" :disabled="!ownAccountAck">
+                <BaseButton variant="primary" @click="addAccount">
                   <span style="margin-right:4px">+</span> 添加账号
                 </BaseButton>
               </div>
             </template>
 
-            <label class="acct-ack">
+            <label class="acct-ack" :class="{ warn: ackWarn }">
               <input type="checkbox" v-model="ownAccountAck" />
               <span>添加的账号需为<strong>你本人拥有或已获授权访问</strong>；本工具只读展示用量，不做绕过或自动切号。</span>
             </label>
@@ -324,7 +324,12 @@ const baseUrl = ref('https://opencode.ai/console/api')
 const intervalSecs = ref(30)
 // 「添加账号」前的一次性确认（只添加自己拥有 / 已获授权的账号）
 const ownAccountAck = ref(localStorage.getItem('ocm_own_account_ack') === '1')
-watch(ownAccountAck, (v) => localStorage.setItem('ocm_own_account_ack', v ? '1' : '0'))
+const ackWarn = ref(false)
+let ackTimer = null
+watch(ownAccountAck, (v) => {
+  localStorage.setItem('ocm_own_account_ack', v ? '1' : '0')
+  if (v) ackWarn.value = false
+})
 const syncing = ref(false)
 const msg = ref('')
 const msgType = ref('')
@@ -379,43 +384,53 @@ function accountName(id) {
 
 // 主账号未登录 / 无账号时的登录入口
 function loginPrimary() { startLogin() }
-// 添加新账号：登录结果会新建一个账号
+// 添加新账号：登录结果会新建一个账号。未勾选确认时不禁用按钮，而是明确提示（避免"灰按钮无解释"）
 function addAccount() {
-  if (!ownAccountAck.value) { acctMsg.value = '请先勾选上方确认（只添加自己拥有 / 已获授权的账号）'; acctMsgType.value = 'err'; return }
+  if (!ownAccountAck.value) {
+    ackWarn.value = true
+    acctMsg.value = '添加账号前，请先勾选上方「账号需为本人所有或已获授权」'
+    acctMsgType.value = 'err'
+    clearTimeout(ackTimer)
+    ackTimer = setTimeout(() => { ackWarn.value = false }, 2600)
+    return
+  }
+  acctMsg.value = ''
+  acctMsgType.value = ''
   startLogin({ addNew: true })
 }
 function reloginAccount(a) { startLogin({ accountId: a.id }) }
 
-function editAccount(a) {
-  editingAccount.value = { id: a.id, name: a.name, is_primary: !!a.is_primary, logged_in: !!a.logged_in, org_id: a.org_id || '', rows: a.rows || 0, last_sync_ms: a.last_sync_ms || 0 }
-  showAccountEdit.value = true
+// 重命名：双击账号名就地编辑（不再有「编辑」按钮 / 编辑弹窗）
+async function startRename(a) {
+  renamingId.value = a.id
+  renameDraft.value = a.name
+  await nextTick()
+  const el = document.querySelector('.acct-rename')
+  el?.focus()
+  el?.select?.()
 }
-
-function closeAccountEdit() {
-  showAccountEdit.value = false
-  editingAccount.value = null
+function cancelRename() {
+  renamingId.value = ''
+  renameDraft.value = ''
+}
+async function commitRename() {
+  const id = renamingId.value
+  if (!id) return
+  const name = renameDraft.value.trim()
+  const cur = accounts.value.find((a) => a.id === id)
+  cancelRename()
+  if (!cur || !name || name === cur.name) return
+  try {
+    await invoke('rename_account', { id, name })
+    acctMsg.value = `✓ 已重命名为「${name}」`; acctMsgType.value = 'ok'
+    await loadAccounts()
+  } catch (e) { acctMsg.value = String(e); acctMsgType.value = 'err' }
 }
 
 async function setPrimaryAccount(a) {
   try {
     await invoke('set_primary_account', { id: a.id })
     acctMsg.value = `✓ 「${a.name}」已设为主账号`; acctMsgType.value = 'ok'
-    await loadAccounts()
-    await loadQuota()
-    emit('changed')
-  } catch (e) { acctMsg.value = String(e); acctMsgType.value = 'err' }
-}
-
-// AccountEditModal 只负责表单，保存动作在这里执行
-async function onAccountSave(payload) {
-  const a = editingAccount.value
-  closeAccountEdit()
-  if (!a) return
-  try {
-    const name = String(payload?.name || '').trim()
-    if (name && name !== a.name) await invoke('rename_account', { id: a.id, name })
-    if (payload?.setPrimary && !a.is_primary) await invoke('set_primary_account', { id: a.id })
-    acctMsg.value = '✓ 已保存'; acctMsgType.value = 'ok'
     await loadAccounts()
     await loadQuota()
     emit('changed')
@@ -718,8 +733,12 @@ async function checkForUpdate() {
 .acct-head-actions { display: flex; align-items: center; gap: 8px; }
 .acct-ack {
   display: flex; align-items: flex-start; gap: 8px; margin: 0 0 10px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(255, 255, 255, .02);
   font-size: 11px; line-height: 1.5; color: var(--muted); cursor: pointer;
+  transition: border-color .15s, background .15s;
 }
+.acct-ack.warn { border-color: #e0a83c; background: rgba(224, 168, 60, .10); }
 .acct-ack input { margin-top: 2px; flex-shrink: 0; }
 .acct-ack strong { color: var(--text); font-weight: 600; }
 .acct-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
