@@ -75,9 +75,11 @@ opencode-monitor/
 
 ### 账户 (`accounts.rs`)
 - 账号 = `{ id, name, org_id, cookie }`；`id` 优先用工作区 id（`org_...`）。
-- 启动时把单账号时代的 `session_cookie` / `org_id` 迁移成第一个账号（幂等），并清掉旧字段。
+- 账号列表存在 `opencode-monitor.json` 的 `accounts` 数组；单账号时代的 `session_cookie` / `org_id` **不再读取**（升级后需重新登录一次，不做配置迁移）。
 
 ### 存储 (`store.rs`)
+- `request_log` 的 `cost_micro_cents`：`/request-logs` 的 `cost` 是**美元浮点**（实测如 `0.00113096`），
+  入库前 ×1e8 换算成 microCents（与前端 `fmtUsd` 一致）；按整数解析会全变 0。
 - `usage_daily` 主键 `(account_id,day,user_type,user_id,provider,model)`（逐条日志按天聚合结果）
 - `request_log` 主键 `(account_id,id)`（逐条日志：tokens / status / started_at_ms）
 - `meta`：全局 `last_sync_ms` / `schema_version`；账号维度 `last_sync_ms:<id>` / `last_full_sync_ms:<id>` / `last_requestlog_ms:<id>` / `initialized:<id>`
