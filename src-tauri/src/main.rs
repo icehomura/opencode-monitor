@@ -363,7 +363,7 @@ fn range_bucket(range: &str) -> (i64, i64, &'static str) {
             60_000,
             "minute",
         ),
-        "today" => (local_midnight_ms(), 300_000, "minute"),
+        "today" => (local_midnight_ms(), 60_000, "minute"),
         "week" => (
             q.as_ref()
                 .and_then(|q| parse(&q.week.starts_at))
