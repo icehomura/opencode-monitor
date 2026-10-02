@@ -40,15 +40,29 @@ const COLOR = {
   cache: '#7f8aa3',
 }
 
+// 分钟粒度跨天时（本周 / 本月 / 全部）必须带日期，否则 HH:MM 无法区分是哪一天。
+let multiDay = false
+
 function labelOf(v) {
   const d = new Date(v)
   if (Number.isNaN(d.getTime())) return String(v)
   const p = (n) => String(n).padStart(2, '0')
+  const md = `${p(d.getMonth() + 1)}-${p(d.getDate())}`
   switch (props.granularity) {
-    case 'minute': return `${p(d.getHours())}:${p(d.getMinutes())}`
-    case 'hour': return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:00`
-    default: return `${p(d.getMonth() + 1)}-${p(d.getDate())}`
+    case 'minute': {
+      const hm = `${p(d.getHours())}:${p(d.getMinutes())}`
+      return multiDay ? `${md} ${hm}` : hm
+    }
+    case 'hour': return `${md} ${p(d.getHours())}:00`
+    default: return md
   }
+}
+
+/** 系列是否跨越一天以上（决定分钟刻度要不要带日期）。 */
+function spansDays() {
+  const first = Number(props.points[0]?.date)
+  const last = Number(props.points[props.points.length - 1]?.date)
+  return Number.isFinite(first) && Number.isFinite(last) && last - first > 86_400_000
 }
 
 function axis() {
@@ -98,6 +112,7 @@ function renderChart() {
   const barNormal = light ? 'rgba(120,132,152,0.28)' : 'rgba(150,162,184,0.20)'
   // 缓存线：偏蓝的板岩灰，和背景柱的中性灰拉开区别
   const cacheColor = light ? '#7d88a8' : '#7c88ad'
+  multiDay = props.granularity === 'minute' && spansDays()
   const labels = props.points.map((p) => labelOf(p.date))
   const normal = props.points.map((p) => Math.max(0, Number(p.requests || 0) - Number(p.error_requests || 0)))
   const errors = props.points.map((p) => Number(p.error_requests || 0))
