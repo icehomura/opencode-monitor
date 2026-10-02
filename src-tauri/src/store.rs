@@ -30,16 +30,6 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS usage_sample (
-    ts_ms INTEGER PRIMARY KEY,
-    requests INTEGER NOT NULL DEFAULT 0,
-    input_tokens INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_write_5m_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_write_1h_tokens INTEGER NOT NULL DEFAULT 0,
-    cost_micro_cents INTEGER NOT NULL DEFAULT 0
-);
 CREATE TABLE IF NOT EXISTS request_log (
     id TEXT PRIMARY KEY,
     started_at_ms INTEGER NOT NULL,
@@ -148,71 +138,6 @@ pub fn upsert_rows(rows: &[UsageDailyRow]) -> usize {
     written
 }
 
-/// 查询日志（分页）。since_day 为 `YYYY-MM-DD`，None 表示全部。
-#[allow(clippy::too_many_arguments)]
-pub fn query_rows(
-    since_day: Option<&str>,
-    user_id: Option<&str>,
-    model: Option<&str>,
-    page: u32,
-    page_size: u32,
-) -> (Vec<UsageDailyRow>, u32) {
-    let page = page.max(1);
-    let page_size = page_size.clamp(1, 200);
-    let offset = (page - 1) * page_size;
-    let mut out = Vec::new();
-    // 三个条件都用「占位符 IS NULL OR ...」写成固定形状，
-    // 这样参数永远恰好 3 个，避免 rusqlite 因占位符数量与实参不符而报错。
-    let where_clause = "WHERE (?1 IS NULL OR day >= ?1)\
-         AND (?2 IS NULL OR user_id = ?2)\
-         AND (?3 IS NULL OR model = ?3)";
-    let total = with_conn(|conn| {
-        let total: i64 = conn
-            .query_row(
-                &format!("SELECT COUNT(*) FROM usage_daily {where_clause}"),
-                params![since_day, user_id, model],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        let sql = format!(
-            "SELECT day, user_type, user_id, user_name, provider, model,
-                    requests, input_tokens, output_tokens, cache_read_tokens,
-                    cache_write_5m_tokens, cache_write_1h_tokens, cost_micro_cents
-             FROM usage_daily {where_clause}
-             ORDER BY day DESC, cost_micro_cents DESC
-             LIMIT {page_size} OFFSET {offset}"
-        );
-        let mut stmt = match conn.prepare(&sql) {
-            Ok(s) => s,
-            Err(_) => return 0i64,
-        };
-        let rows = stmt.query_map(params![since_day, user_id, model], |row| {
-            Ok(UsageDailyRow {
-                day: row.get(0)?,
-                user_type: row.get(1)?,
-                user_id: row.get(2)?,
-                user_name: row.get(3)?,
-                provider: row.get(4)?,
-                model: row.get(5)?,
-                requests: row.get(6)?,
-                input_tokens: row.get(7)?,
-                output_tokens: row.get(8)?,
-                cache_read_tokens: row.get(9)?,
-                cache_write_5m_tokens: row.get(10)?,
-                cache_write_1h_tokens: row.get(11)?,
-                cost_micro_cents: row.get(12)?,
-            })
-        });
-        if let Ok(rows) = rows {
-            for r in rows.flatten() {
-                out.push(r);
-            }
-        }
-        total
-    });
-    (out, total.unwrap_or(0) as u32)
-}
-
 /// 本地总量（用于同步状态展示）。
 pub fn stats_summary() -> (i64, i64) {
     with_conn(|conn| {
@@ -253,87 +178,6 @@ pub fn get_meta(key: &str) -> Option<String> {
     .flatten()
 }
 
-// ──────────────── 秒级采样 ────────────────
-
-/// 一次采样点（自上一次采样以来的增量）
-#[derive(Debug, Clone, serde::Serialize, Default)]
-pub struct Sample {
-    pub ts_ms: i64,
-    pub requests: i64,
-    pub input_tokens: i64,
-    pub output_tokens: i64,
-    pub cache_read_tokens: i64,
-    pub cost_micro_cents: i64,
-}
-
-impl Sample {
-    pub fn total_tokens(&self) -> i64 {
-        self.input_tokens + self.output_tokens + self.cache_read_tokens
-    }
-}
-
-/// 写入一个采样点（按毫秒时间戳 upsert）。
-pub fn insert_sample(ts_ms: i64, s: &crate::opencode::Summary) {
-    let _ = with_conn(|conn| {
-        conn.execute(
-            "INSERT INTO usage_sample
-               (ts_ms, requests, input_tokens, output_tokens, cache_read_tokens,
-                cache_write_5m_tokens, cache_write_1h_tokens, cost_micro_cents)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-             ON CONFLICT(ts_ms) DO UPDATE SET
-               requests=excluded.requests,
-               input_tokens=excluded.input_tokens,
-               output_tokens=excluded.output_tokens,
-               cache_read_tokens=excluded.cache_read_tokens,
-               cache_write_5m_tokens=excluded.cache_write_5m_tokens,
-               cache_write_1h_tokens=excluded.cache_write_1h_tokens,
-               cost_micro_cents=excluded.cost_micro_cents",
-            params![
-                ts_ms, s.total_requests, s.input_tokens, s.output_tokens,
-                s.cache_read_tokens, s.cache_write_5m_tokens, s.cache_write_1h_tokens,
-                s.total_cost_micro_cents
-            ],
-        )
-    });
-}
-
-/// 查询 `since_ms` 之后的采样点，按时间升序（图表从左到右）。
-pub fn query_samples(since_ms: i64) -> Vec<Sample> {
-    let mut out = Vec::new();
-    with_conn(|conn| {
-        let mut stmt = match conn.prepare(
-            "SELECT ts_ms, requests, input_tokens, output_tokens, cache_read_tokens, cost_micro_cents
-             FROM usage_sample WHERE ts_ms >= ?1 ORDER BY ts_ms ASC",
-        ) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-        let mapped = stmt.query_map(params![since_ms], |row| {
-            Ok(Sample {
-                ts_ms: row.get(0)?,
-                requests: row.get(1)?,
-                input_tokens: row.get(2)?,
-                output_tokens: row.get(3)?,
-                cache_read_tokens: row.get(4)?,
-                cost_micro_cents: row.get(5)?,
-            })
-        });
-        if let Ok(rows) = mapped {
-            for r in rows.flatten() {
-                out.push(r);
-            }
-        }
-    });
-    out
-}
-
-/// 清理过旧的采样点（默认保留 7 天，避免表无限增长）。
-pub fn prune_samples(before_ms: i64) {
-    let _ = with_conn(|conn| {
-        conn.execute("DELETE FROM usage_sample WHERE ts_ms < ?1", params![before_ms])
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,30 +201,17 @@ mod tests {
     }
 
     /// 同一主键重复 upsert 必须更新而非新增，否则每 5 秒的增量同步会把表撑爆。
-    /// 同时验证按天过滤的分页查询。
     #[test]
-    fn upsert_is_idempotent_and_filters_by_day() {
+    fn upsert_is_idempotent() {
         use_memory_db_for_test();
         assert_eq!(upsert_rows(&[row("2026-10-01", "m1", 100, 1)]), 1);
         assert_eq!(upsert_rows(&[row("2026-10-02", "m1", 200, 2)]), 1);
         // 同一天同一模型：应更新那一行
         assert_eq!(upsert_rows(&[row("2026-10-02", "m1", 350, 7)]), 1);
 
-        let (rows, total) = query_rows(None, None, None, 1, 50);
-        assert_eq!(total, 2, "重复 upsert 不应新增行");
-        let d2 = rows.iter().find(|r| r.day == "2026-10-02").unwrap();
-        assert_eq!(d2.cost_micro_cents, 350);
-        assert_eq!(d2.requests, 7);
-
-        // since_day 过滤只保留 10-02
-        let (rows, total) = query_rows(Some("2026-10-02"), None, None, 1, 50);
-        assert_eq!(total, 1);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].day, "2026-10-02");
-
         let (count, cost) = stats_summary();
-        assert_eq!(count, 2);
-        assert_eq!(cost, 450);
+        assert_eq!(count, 2, "重复 upsert 不应新增行");
+        assert_eq!(cost, 450, "花费应被覆盖而不是累加");
     }
 }
 

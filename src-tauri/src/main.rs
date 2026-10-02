@@ -104,61 +104,24 @@ fn update_config_value(mutate: impl FnOnce(&mut serde_json::Value)) -> Result<()
     std::fs::write(&path, text).map_err(|e| format!("写入配置失败：{e}"))
 }
 
-fn mask_key(key: &str) -> String {
-    if key.len() <= 12 {
-        return if key.is_empty() { String::new() } else { "****".into() };
-    }
-    format!("{}…{}", &key[..10], &key[key.len() - 6..])
-}
-
 // ──────── 命令 ────────
 
-/// 账户信息（不带完整 Key）
+/// 本地设置。鉴权只走登录会话，不再有 API Key 字段。
 #[tauri::command]
-fn get_account() -> serde_json::Value {
+fn get_settings() -> serde_json::Value {
     let cfg = read_config_value();
-    let key = cfg.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
     let base = cfg
         .get("base_url")
         .and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(opencode::DEFAULT_BASE_URL);
     json!({
-        "configured": !key.trim().is_empty(),
-        "api_key_masked": mask_key(key),
         "base_url": base,
         "incremental_secs": incremental_secs(),
     })
 }
 
-/// 保存并验证 API Key：先调 go/status 验证，成功才落盘。
-#[tauri::command]
-async fn save_account(api_key: String, base_url: String, incremental_secs: u64) -> Result<serde_json::Value, String> {
-    let key = api_key.trim().to_string();
-    if key.is_empty() {
-        return Err("请填写 API Key".into());
-    }
-    let base = if base_url.trim().is_empty() {
-        opencode::DEFAULT_BASE_URL.to_string()
-    } else {
-        base_url.trim().to_string()
-    };
-    let client = opencode::Client::with_base(key.clone(), base.clone());
-    // 验证：能读到额度即说明 Key 有效且具有读取权限
-    let quota = client
-        .go_status()
-        .await
-        .map_err(|e| format!("验证失败：{e}"))?;
-    update_config_value(|v| {
-        v["api_key"] = json!(key);
-        v["base_url"] = json!(base);
-        v["incremental_secs"] = json!(incremental_secs.clamp(2, 3600));
-    })?;
-    sync::set_quota(Some(quota.clone()));
-    Ok(json!({ "ok": true, "quota": quota }))
-}
-
-/// 只保存基址 / 同步间隔（不改动 API Key），供设置面板自动保存。
+/// 保存基址 / 同步间隔，供设置面板自动保存。
 #[tauri::command]
 fn save_settings(base_url: String, incremental_secs: u64) -> Result<serde_json::Value, String> {
     let base = if base_url.trim().is_empty() {
@@ -173,22 +136,13 @@ fn save_settings(base_url: String, incremental_secs: u64) -> Result<serde_json::
     Ok(json!({ "ok": true }))
 }
 
-#[tauri::command]
-fn clear_account() -> Result<serde_json::Value, String> {
-    update_config_value(|v| {
-        v["api_key"] = json!("");
-    })?;
-    sync::set_quota(None);
-    Ok(json!({ "ok": true }))
-}
-
-/// 当前额度。优先读缓存；未配置或未拉取时即时请求一次。
+/// 当前额度。优先读缓存；未登录或未拉取时即时请求一次。
 #[tauri::command]
 async fn get_quota() -> serde_json::Value {
     if let Some(q) = sync::quota() {
         return json!({ "available": true, "quota": q });
     }
-    match sync::refresh_quota_any(None).await {
+    match sync::refresh_quota(None).await {
         Ok(q) => json!({ "available": true, "quota": q }),
         Err(e) => json!({ "available": false, "reason": e }),
     }
@@ -196,29 +150,13 @@ async fn get_quota() -> serde_json::Value {
 
 #[tauri::command]
 fn get_sync_status() -> serde_json::Value {
-    let mut st = sync::status();
-    st.configured = sync::client().is_ok();
-    json!(st)
-}
-
-#[tauri::command]
-async fn sync_now() -> Result<serde_json::Value, String> {
-    let c = sync::client()?;
-    let n = sync::sync_incremental(&c, None).await?;
-    Ok(json!({ "ok": true, "rows": n }))
-}
-
-#[tauri::command]
-async fn sync_full_now() -> Result<serde_json::Value, String> {
-    let c = sync::client()?;
-    let n = sync::sync_full(&c, None).await?;
-    Ok(json!({ "ok": true, "rows": n }))
+    json!(sync::status())
 }
 
 /// 用登录会话拉取逐条日志（需要先完成 WebView 授权）。
 #[tauri::command]
 async fn sync_request_logs_now(full: bool) -> Result<serde_json::Value, String> {
-    let sc = session_client()?;
+    let sc = sync::session()?;
     let n = sync::sync_request_logs(&sc, full, None).await?;
     Ok(json!({ "ok": true, "rows": n }))
 }
@@ -404,7 +342,7 @@ async fn get_dashboard(range: String) -> serde_json::Value {
     let mut granularity = GRANULARITY;
     if series.is_empty() {
         fallback = true;
-        if let Ok(c) = sync::client() {
+        if let Ok(c) = sync::session() {
             let (api_range, b) = match range.as_str() {
                 "today" => ("24h", "hour"),
                 "month" => ("30d", "day"),
@@ -448,32 +386,6 @@ async fn get_dashboard(range: String) -> serde_json::Value {
     })
 }
 
-
-/// 本地日志（v2 按天汇总行）分页查询
-#[tauri::command]
-fn get_usage_rows(range: String, user_id: Option<String>, model: Option<String>, page: Option<u32>, page_size: Option<u32>) -> serde_json::Value {
-    let since_day = match range.as_str() {
-        "all" => None,
-        "30d" => Some(day_offset(30)),
-        _ => Some(day_offset(7)),
-    };
-    let uid = user_id.filter(|s| !s.trim().is_empty());
-    let mid = model.filter(|s| !s.trim().is_empty());
-    let (rows, total) = store::query_rows(
-        since_day.as_deref(),
-        uid.as_deref(),
-        mid.as_deref(),
-        page.unwrap_or(1),
-        page_size.unwrap_or(50),
-    );
-    json!({ "rows": rows, "total": total })
-}
-
-fn day_offset(days: i64) -> String {    (chrono::Utc::now() - chrono::Duration::days(days))
-        .format("%Y-%m-%d")
-        .to_string()
-}
-
 // ──────── 系统设置 ────────
 
 #[tauri::command]
@@ -512,32 +424,6 @@ fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
 
 // ──────── 会话授权（WebView 登录）───────
 
-/// 从配置里的会话 Cookie 构造会话客户端（带浏览器 UA / Referer）。
-pub(crate) fn session_client() -> Result<opencode::SessionClient, String> {
-    let cfg = read_config_value();
-    let cookie = cfg
-        .get("session_cookie")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if cookie.is_empty() {
-        return Err("未登录 OpenCode".into());
-    }
-    let base = cfg
-        .get("base_url")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(opencode::DEFAULT_BASE_URL)
-        .to_string();
-    let org = cfg
-        .get("org_id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_string());
-    Ok(opencode::SessionClient::new(cookie, base, org))
-}
-
 /// 在任意 JSON 里递归找形如 `org_...` 的字符串（工作区 id）。
 fn extract_org_id(v: &serde_json::Value) -> Option<String> {
     match v {
@@ -556,7 +442,7 @@ async fn open_login_window(app: tauri::AppHandle) -> Result<serde_json::Value, S
     if let Some(w) = app.get_webview_window("auth") {
         // 程序认为未登录时，清掉残留会话并重新加载登录页，
         // 否则旧会话会被轮询立刻捕获，用户还没来得及操作就被关窗。
-        if session_client().is_err() {
+        if sync::session().is_err() {
             clear_one(&w);
             if let Ok(url) = tauri::Url::parse("https://opencode.ai/console/") {
                 let _ = w.navigate(url);
@@ -853,16 +739,11 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_account,
-            save_account,
+            get_settings,
             save_settings,
-            clear_account,
             get_quota,
             get_sync_status,
-            sync_now,
-            sync_full_now,
             get_dashboard,
-            get_usage_rows,
             get_close_action,
             set_close_action,
             get_autostart,
