@@ -75,7 +75,7 @@ fn create_schema(conn: &Connection) {
 
 /// 本地库只是云端日志的缓存：schema 版本对不上就整表重建，由下次同步重新拉取，
 /// 因此这里不做任何数据迁移。
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 fn stored_schema_version(conn: &Connection) -> i64 {
     conn.query_row(
@@ -631,6 +631,8 @@ pub struct WindowStats {
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub cache_read_tokens: i64,
+    /// 窗口内花费（microCents）
+    pub cost_micro_cents: i64,
     /// 有请求的分钟数
     pub active_minutes: i64,
     /// 窗口总分钟数
@@ -643,18 +645,18 @@ pub fn window_stats(since_ms: i64, until_ms: Option<i64>) -> WindowStats {
     let end = until_ms.unwrap_or(now);
     let mut out = WindowStats::default();
     with_conn(|conn| {
-        let (req, input, output, cache, active, min_started): (i64, i64, i64, i64, i64, i64) = conn
+        let (req, input, output, cache, cost, active, min_started): (i64, i64, i64, i64, i64, i64, i64) = conn
             .query_row(
                 "SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
-                        COALESCE(SUM(cache_read_tokens),0),
+                        COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cost_micro_cents),0),
                         COUNT(DISTINCT (started_at_ms/60000)),
                         COALESCE(MIN(started_at_ms),0)
                  FROM request_log
                  WHERE (?1 = 0 OR started_at_ms >= ?1) AND (?2 IS NULL OR started_at_ms < ?2)",
                 params![since_ms, until_ms],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
             )
-            .unwrap_or((0, 0, 0, 0, 0, 0));
+            .unwrap_or((0, 0, 0, 0, 0, 0, 0));
         let start = if since_ms > 0 { since_ms } else { min_started };
         let span = if start > 0 { (end - start).max(0) } else { 0 };
         out = WindowStats {
@@ -662,6 +664,7 @@ pub fn window_stats(since_ms: i64, until_ms: Option<i64>) -> WindowStats {
             input_tokens: input,
             output_tokens: output,
             cache_read_tokens: cache,
+            cost_micro_cents: cost,
             active_minutes: active,
             window_minutes: span / 60000,
         };
