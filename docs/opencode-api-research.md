@@ -24,11 +24,13 @@ https://opencode.ai/console/api/...
 
 > 注意：控制台 API **不在** `opencode.ai/api`，也不是 `api.opencode.ai`，而是 `opencode.ai/console/api`。
 
-## 2. Service API Key（工作区里生成的 Key）
+## 2. Service API Key（工作区里生成的 Key）——历史记录
 
-- Key 前缀：`oc_sk_...`（新）或 `sk-...`（legacy）。
+> **历史记录**：以下为 API 调研事实。本项目**已废除 API Key**，程序只使用控制台登录会话（见第 7 节）。
+
+- Key 前缀：`oc_sk_...`（新）或 `sk-...`（legacy）。（历史）
 - 权限枚举：`eh = ["all", "inference-only"]`
-  - **全部** = `all` → 可读取用量/账单等（本项目需要这个）
+  - **全部** = `all` → 可读取用量/账单等
   - **仅推理** = `inference-only` → 只能调用模型，读不了用量
 - 生成接口（管理端）：
   - `POST /console/api/service-accounts` `{ name }`
@@ -103,17 +105,18 @@ POST /console/api/internal/orgs/:orgId/go/cancel
 POST /console/api/internal/orgs/:orgId/go/restore-paid-access
 ```
 
-- 这些在 `/api/internal` 下，由内部管理端调用（middleware `Xf`）。
-- **Service API Key 大概率无权访问**（需要内部/管理鉴权）。
-- 因此：**5h/周/月剩余额度更可靠的做法，是用同步到本地的日志累计花费，
-  再按上表的固定额度计算剩余**；到期时间可用 Key 自身的 `expiresAt`。
+- 这些在 `/api/internal` 下，由内部管理端调用（middleware `Xf`），需要内部/管理鉴权。
+- 程序实现：5h/周/月剩余额度直接读 `/go/status` 的 meters；到期时间用 `access.endsAt`。
 
 ## 5. 鉴权（已实测）
 
-- **`Authorization: Bearer <oc_sk_...>`** ✅
-- `x-opencode-api-key`、`x-api-key` 均 401；无效 Key 与缺失 Key 都返回 `401 {"_tag":"Unauthorized"}`。
+> 以下为历史实测结论；程序**已废除 API Key**，现在只用控制台登录会话 Cookie（WebView 登录后捕获）。
 
-## 6. 实测结果（2026-10-02，一把 `all` 权限 Key）
+- **`Authorization: Bearer <oc_sk_...>`** ✅（历史）
+- `x-opencode-api-key`、`x-api-key` 均 401；无效 Key 与缺失 Key 都返回 `401 {"_tag":"Unauthorized"}`。
+- 会话：控制台同源请求自动带 Cookie；`/request-logs` 仅会话可用（Bearer 403）。
+
+## 6. 实测结果（2026-10-02，一把 `all` 权限 Key；历史记录）
 
 | 接口 | 结果 |
 |---|---|
@@ -150,7 +153,7 @@ POST /console/api/internal/orgs/:orgId/go/restore-paid-access
 → **额度直接来自 `/go/status`，无需本地累计**（用户选择的方案 B 成立）。
 到期时间 = `access.endsAt`。
 
-### 6.2 v2 CSV 表头（即同步的「日志」）
+### 6.2 v2 CSV 表头（历史：按天汇总导出，程序已不再使用）
 
 ```
 day,user_type,user_id,user_name,provider,model,requests,
@@ -164,11 +167,17 @@ cache_write_5m_tokens,cache_write_1h_tokens,cost_micro_cents
 2026-10-02,service_account,svcacct_01M3...,claude,opencode-go,deepseek-v4.1-flash,231,400725,144689,32290560,0,0,39493787
 ```
 
+> 程序现在的同步源是会话 Cookie 调用的 `/request-logs` 逐条 JSON（cursor 分页，limit ≤ 100），
+> 本地按天聚合；上面的 CSV 导出仅作历史记录保留。
+
 ## 7. 结论 / 设计约束
 
-1. 逐条日志（v1）不可用 → 同步对象是 **v2 按天 rollup**（一天 × user × provider × model 一行）。
-   唯一键：`(day, user_type, user_id, provider, model)`，用 upsert 保证云端=本地。
-2. 额度/到期直接读 `/go/status`；`/usage/cost-by-day?bucket=hour` 可用于图表。
-3. 增量同步：定时重新拉 `range=7d`（或 30d）v2 CSV 并 upsert，天然幂等。
-4. 全量同步：拉 `range=90d`（接口上限）并 upsert。
-5. 基址默认 `https://opencode.ai/console/api`。
+> 历史方案（v2/v1 CSV 导出、按天兜底、API Key 回退）**已废除**：程序不再使用 API Key，
+> 逐条数据统一走控制台登录会话。
+
+1. 同步对象是 **`/request-logs` 逐条日志**（精确到秒），落库后本地按天聚合；
+   唯一键为 request_log 的 `id`，用 upsert 保证云端=本地。
+2. 额度/到期直接读 `/go/status`；图表与 RPM 由本地逐条日志聚合。
+3. 增量同步：按 `last_requestlog_ms` 续拉，天然幂等。
+4. 全量同步：拉最近 30d 逐条日志并 upsert。
+5. 基址默认 `https://opencode.ai/console/api`；所有请求带登录会话 Cookie，未登录时无数据。
