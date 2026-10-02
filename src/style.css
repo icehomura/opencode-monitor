@@ -1,0 +1,50 @@
+:root {
+  --bg: #0f1420;
+  --panel: #171e2e;
+  --border: #263049;
+  --text: #dfe6f5;
+  --muted: #8b97b0;
+  --blue: #4f8cff;
+  --green: #35d0a5;
+  --scroll-thumb: #2c3856;
+}
+html[data-theme="light"] {
+  --bg: #f2f5fa;
+  --panel: #ffffff;
+  --border: #d7dee9;
+  --text: #1c2433;
+  --muted: #66738c;
+  --blue: #2f6fe4;
+  --green: #149e78;
+  --scroll-thumb: #b9c4d6;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { background: var(--bg); }
+/* 确保外壳也绘上主题背景（否则浅色模式下空隙会是窗口原生深色底）*/
+#app, .app-shell { background: var(--bg); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 10px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--blue); }
+::-webkit-scrollbar-corner { background: transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+body * { user-select: none; -webkit-user-select: none; }
+input, textarea, select { user-select: text; -webkit-user-select: text; }
+img { -webkit-user-drag: none; user-drag: none; }
