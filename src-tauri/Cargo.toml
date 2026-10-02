@@ -1,6 +1,6 @@
 [package]
 name = "opencode-monitor"
-version = "0.3.3"
+version = "0.3.4"
 description = "OpenCode Go/Go Plus 用量与额度监控"
 edition = "2021"
 rust-version = "1.77"
