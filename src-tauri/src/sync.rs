@@ -184,6 +184,7 @@ pub async fn sync_request_logs(
     let daily = crate::store::request_logs_to_daily();
     crate::store::upsert_rows(&daily);
     crate::store::set_meta("last_requestlog_ms", &(max_started + 1).to_string());
+    crate::store::set_meta("last_sync_ms", &now.to_string());
     crate::store::prune_request_logs(now - 40 * 24 * 3600 * 1000);
     if full {
         crate::store::set_meta("last_full_sync_ms", &now.to_string());
