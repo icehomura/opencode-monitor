@@ -27,7 +27,6 @@ export function useMonitor() {
     localRows: 0,
     localCost: 0,
     sync: {
-      configured: false,
       syncing: false,
       last_sync_ms: 0,
       last_full_sync_ms: 0,
@@ -120,7 +119,6 @@ export function useMonitor() {
       if (d?.minute) stats.minute = d.minute
       stats.localRows = d?.local_rows || 0
       stats.localCost = d?.local_cost_micro_cents || 0
-      if (d && d.configured === false) stats.quotaReason = d.reason || ''
     } catch (e) {
       if (current === seq) console.error('get_dashboard failed:', e)
     } finally {

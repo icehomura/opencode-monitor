@@ -27,12 +27,8 @@
 
         <!-- ── Tab：账户 ── -->
         <div v-show="activeTab === 'account'" class="tab-pane">
-          <SettingsCard title="OpenCode 账户" description="填 API Key 或直接登录授权，任一即可；均自动保存">
+          <SettingsCard title="OpenCode 账户" description="登录 OpenCode 账户同步控制台日志；基址与同步间隔自动保存">
             <div class="form-col">
-              <div class="settings-row">
-                <span class="settings-label">API Key</span>
-                <BaseInput v-model="apiKey" type="password" :placeholder="account.api_key_masked || 'oc_sk_...'" />
-              </div>
               <div class="settings-row">
                 <span class="settings-label">接口基址</span>
                 <BaseInput v-model="baseUrl" placeholder="https://opencode.ai/console/api" />
@@ -57,14 +53,13 @@
 
           <SettingsCard title="同步" description="首次启动自动全量同步；之后按间隔增量同步">
             <div class="sync-row">
-              <BaseButton @click="doSync(false)" :disabled="syncing || !(account.configured || login.logged_in)">立即同步</BaseButton>
-              <BaseButton variant="primary" @click="doSync(true)" :disabled="syncing || !(account.configured || login.logged_in)">
+              <BaseButton @click="doSync(false)" :disabled="syncing || !login.logged_in">立即同步</BaseButton>
+              <BaseButton variant="primary" @click="doSync(true)" :disabled="syncing || !login.logged_in">
                 {{ syncing ? '同步中…' : '全量同步' }}
               </BaseButton>
-              <BaseButton variant="danger" @click="clear" :disabled="!account.configured">清除 Key</BaseButton>
             </div>
             <div class="status-lines">
-              <span>状态：{{ account.configured ? 'API Key 已配置' : '未配置 Key' }}{{ login.logged_in ? ' · 已授权' : '' }}</span>
+              <span>状态：{{ login.logged_in ? '已登录' : '未登录' }}</span>
               <span v-if="sync.local_rows">本地已同步 {{ sync.local_rows }} 条记录</span>
               <span v-if="sync.last_sync_ms">最近同步：{{ fmtAgo(sync.last_sync_ms) }} · {{ fmtClock(sync.last_sync_ms) }}</span>
               <span :title="sync.source_note">新增：{{ sync.last_added || 0 }} 条 · 本地：{{ sync.local_rows || 0 }} 条</span>
@@ -86,13 +81,13 @@
 
         <!-- ── Tab：日志 ── -->
         <div v-show="activeTab === 'logs'" class="tab-pane">
-          <SettingsCard :title="login.logged_in ? '逐条请求日志' : '云端日志（按天汇总）'"
-            :description="login.logged_in ? '来自 /request-logs，时间精确到秒' : 'Service Key 只能拿按天汇总；登录后可看逐条'" auto>
+          <SettingsCard title="逐条请求日志"
+            description="来自控制台 /request-logs，时间精确到秒；未登录时无数据" auto>
             <template #actions>
               <DdSelect :options="logRangeOptions" v-model="logRange" />
             </template>
             <div class="log-table-wrap">
-              <table class="log-table" v-if="login.logged_in">
+              <table class="log-table">
                 <thead>
                   <tr>
                     <th>时间</th><th>模型</th><th class="num">输入</th><th class="num">输出</th>
@@ -111,30 +106,7 @@
                     <td class="num" :class="{ bad: r.status_code >= 400 }">{{ r.status_code || '-' }}</td>
                     <td class="num">{{ fmtUsd(r.cost_micro_cents) }}</td>
                   </tr>
-                  <tr v-if="!reqLogs.length"><td colspan="9" class="empty">暂无逐条记录，请登录后点「全量同步」</td></tr>
-                </tbody>
-              </table>
-
-              <table class="log-table" v-else>
-                <thead>
-                  <tr>
-                    <th>日期</th><th>用户</th><th>模型</th>
-                    <th class="num">请求</th><th class="num">输入</th>
-                    <th class="num">输出</th><th class="num">缓存读</th><th class="num">花费</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(r, i) in logs" :key="i">
-                    <td>{{ r.day }}</td>
-                    <td class="ellipsis" :title="r.user_name || r.user_id">{{ r.user_name || r.user_id }}</td>
-                    <td class="ellipsis" :title="r.model">{{ r.model }}</td>
-                    <td class="num">{{ r.requests.toLocaleString() }}</td>
-                    <td class="num">{{ fmtTokens(r.input_tokens, convertUnits) }}</td>
-                    <td class="num">{{ fmtTokens(r.output_tokens, convertUnits) }}</td>
-                    <td class="num">{{ fmtTokens(r.cache_read_tokens, convertUnits) }}</td>
-                    <td class="num">{{ fmtUsd(r.cost_micro_cents) }}</td>
-                  </tr>
-                  <tr v-if="!logs.length"><td colspan="8" class="empty">暂无记录，请先同步</td></tr>
+                  <tr v-if="!reqLogs.length"><td colspan="9" class="empty">{{ login.logged_in ? '暂无记录，请点「全量同步」' : '未登录，请到「账户」页登录' }}</td></tr>
                 </tbody>
               </table>
             </div>
@@ -295,23 +267,21 @@ const tabs = [
 ]
 
 // ── 账户 ──
-const account = ref({ configured: false, api_key_masked: '', base_url: '' })
-const apiKey = ref('')
 const baseUrl = ref('https://opencode.ai/console/api')
 const intervalSecs = ref(5)
 const syncing = ref(false)
 const msg = ref('')
 const msgType = ref('')
 const quota = ref(null)
-const sync = ref({ configured: false, syncing: false, last_sync_ms: 0, last_full_sync_ms: 0, last_error: null, local_rows: 0 })
+const sync = ref({ syncing: false, last_sync_ms: 0, last_full_sync_ms: 0, last_error: null, local_rows: 0 })
 
 const _loading = ref(true)
 
-async function loadAccount() {
+async function loadSettings() {
   try {
-    account.value = await invoke('get_account')
-    baseUrl.value = account.value.base_url || 'https://opencode.ai/console/api'
-    intervalSecs.value = account.value.incremental_secs || 5
+    const s = await invoke('get_settings')
+    baseUrl.value = s?.base_url || 'https://opencode.ai/console/api'
+    intervalSecs.value = s?.incremental_secs || 5
   } catch {}
   await loadQuota()
   await loadSync()
@@ -328,38 +298,7 @@ async function loadSync() {
   try { sync.value = (await invoke('get_sync_status')) || sync.value } catch {}
 }
 
-// API Key 自动保存（防抖 900ms），不再需要「保存」按钮
-let keyTimer = null
-async function autoSaveKey() {
-  const val = (apiKey.value || '').trim()
-  if (val.length < 8) {
-    msg.value = val ? 'API Key 太短' : ''
-    return
-  }
-  msg.value = '保存并验证中…'; msgType.value = ''
-  try {
-    const r = await invoke('save_account', {
-      apiKey: val,
-      baseUrl: baseUrl.value,
-      incrementalSecs: Number(intervalSecs.value) || 5,
-    })
-    quota.value = r.quota
-    account.value = { ...account.value, configured: true, api_key_masked: '****' }
-    msg.value = `✓ 已保存并验证（${r.quota.plan_name}）`; msgType.value = 'ok'
-    await loadSync()
-    emit('changed')
-  } catch (e) {
-    msg.value = String(e); msgType.value = 'err'
-  }
-}
-
-watch(apiKey, () => {
-  if (_loading.value) return
-  clearTimeout(keyTimer)
-  keyTimer = setTimeout(autoSaveKey, 900)
-})
-
-// 基址 / 间隔：防抖自动保存（不改动 API Key）
+// 基址 / 间隔：防抖自动保存
 let setTimer = null
 function scheduleSettings() {
   if (_loading.value) return
@@ -377,22 +316,10 @@ function scheduleSettings() {
 watch(baseUrl, scheduleSettings)
 watch(intervalSecs, scheduleSettings)
 
-async function clear() {
-  try {
-    await invoke('clear_account')
-    apiKey.value = ''; quota.value = null
-    msg.value = '✓ 已清除 API Key'; msgType.value = 'ok'
-    await loadAccount()
-    emit('changed')
-  } catch (e) { msg.value = String(e); msgType.value = 'err' }
-}
-
 async function doSync(full) {
   syncing.value = true
   try {
-    const r = props.login?.logged_in
-      ? await invoke('sync_request_logs_now', { full })
-      : (full ? await invoke('sync_full_now') : await invoke('sync_now'))
+    const r = await invoke('sync_request_logs_now', { full })
     msg.value = `✓ 已处理 ${r.rows} 条`; msgType.value = 'ok'
     await loadSync()
     await loadLogs()
@@ -401,7 +328,7 @@ async function doSync(full) {
   finally { syncing.value = false }
 }
 
-// ── 登录授权（与 API Key 同一面板，状态统一走 msg）──
+// ── 登录授权（状态统一走 msg）──
 let loginPoll = null
 
 async function startLogin() {
@@ -438,7 +365,6 @@ watch(() => props.autoLogin, (v) => { if (v && props.visible) startLogin() })
 onBeforeUnmount(() => { clearInterval(loginPoll) })
 
 // ── 日志 ──
-const logs = ref([])
 const reqLogs = ref([])
 const models = ref([])
 const rpm = ref({ current: 0, peak: 0, avg: 0, last_5m: 0, throttled_429: 0, total: 0 })
@@ -467,25 +393,14 @@ const logRangeOptions = [
 ]
 
 async function loadLogs() {
-  if (props.login?.logged_in) {
-    try {
-      const r = await invoke('get_request_logs', {
-        range: logRange.value, page: logPage.value, pageSize: logPageSize,
-      })
-      reqLogs.value = r?.rows || []
-      logTotal.value = r?.total || 0
-    } catch { reqLogs.value = []; logTotal.value = 0 }
-    logs.value = []
-  } else {
-    try {
-      const r = await invoke('get_usage_rows', {
-        range: logRange.value, page: logPage.value, pageSize: logPageSize,
-      })
-      logs.value = r?.rows || []
-      logTotal.value = r?.total || 0
-    } catch { logs.value = []; logTotal.value = 0 }
-    reqLogs.value = []
-  }
+  if (!props.login?.logged_in) { reqLogs.value = []; logTotal.value = 0; return }
+  try {
+    const r = await invoke('get_request_logs', {
+      range: logRange.value, page: logPage.value, pageSize: logPageSize,
+    })
+    reqLogs.value = r?.rows || []
+    logTotal.value = r?.total || 0
+  } catch { reqLogs.value = []; logTotal.value = 0 }
 }
 
 async function loadModels() {
@@ -555,12 +470,12 @@ watch(() => props.visible, async (v) => {
   _loading.value = true
   activeTab.value = 'account'
   msg.value = ''
-  await loadAccount()
+  await loadSettings()
   await loadLogs()
   await loadModels()
   await loadRpm()
   await loadSystem()
-  // 略等一拍，避免 loadAccount 赋值的 watcher 在 _loading 变 false 后才触发而误保存
+  // 略等一拍，避免 loadSettings 赋值的 watcher 在 _loading 变 false 后才触发而误保存
   setTimeout(() => { _loading.value = false }, 300)
 })
 

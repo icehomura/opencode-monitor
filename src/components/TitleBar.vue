@@ -54,7 +54,6 @@ import IconButton from './base/IconButton.vue'
 
 const props = defineProps({
   quota: { type: Object, default: null },
-  configured: { type: Boolean, default: false },
 })
 defineEmits(['open-settings'])
 

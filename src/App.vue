@@ -2,7 +2,6 @@
   <div class="app-shell">
     <TitleBar
       :quota="stats.quota"
-      :configured="stats.sync.configured"
       @open-settings="showSettings = true"
     />
     <Toolbar

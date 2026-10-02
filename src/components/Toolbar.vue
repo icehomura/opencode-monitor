@@ -1,6 +1,6 @@
 <template>
   <header class="toolbar" ref="toolbarRef" @mousedown="tryDrag" @dblclick="onDblClick">
-    <span class="status-dot" :class="{ ok: sync.configured, syncing: sync.syncing }"></span>
+    <span class="status-dot" :class="{ ok: login.logged_in, syncing: sync.syncing }"></span>
     <span class="sync-text" :title="sync.last_error || ''">
       {{ statusText }}
     </span>
@@ -12,10 +12,10 @@
     <div class="toolbar-right">
       <span class="local-text">新增 {{ sync.last_added || 0 }} 条</span>
       <span class="local-text">本地 {{ sync.local_rows || 0 }} 条</span>
-      <BaseButton @click="doSync(false)" :disabled="!sync.configured || sync.syncing">
+      <BaseButton @click="doSync(false)" :disabled="!login.logged_in || sync.syncing">
         {{ sync.syncing ? '同步中…' : '立即同步' }}
       </BaseButton>
-      <BaseButton variant="primary" @click="doSync(true)" :disabled="!sync.configured || sync.syncing">
+      <BaseButton variant="primary" @click="doSync(true)" :disabled="!login.logged_in || sync.syncing">
         全量同步
       </BaseButton>
       <DdSelect :options="rangeOptions" :modelValue="range" @update:modelValue="$emit('range-change', $event)" />
@@ -52,7 +52,7 @@ const rangeOptions = [
 ]
 
 const statusText = computed(() => {
-  if (!props.sync.configured) return '未配置 API Key · 请在设置中填写'
+  if (!props.login?.logged_in) return '未登录 · 点击设置→账户登录'
   if (props.sync.syncing) return '正在同步云端日志…'
   if (props.sync.last_error) return `同步失败：${props.sync.last_error}`
   return `已同步 · ${fmtAgo(props.sync.last_sync_ms)} · ${fmtClock(props.sync.last_sync_ms)}`
@@ -61,10 +61,7 @@ const statusText = computed(() => {
 async function doSync(full) {
   msg.value = ''
   try {
-    // 已登录时用逐条日志（秒级）；否则回退云端汇总接口
-    const r = props.login?.logged_in
-      ? await invoke('sync_request_logs_now', { full })
-      : (full ? await invoke('sync_full_now') : await invoke('sync_now'))
+    const r = await invoke('sync_request_logs_now', { full })
     msg.value = `✓ 已处理 ${r.rows} 条`
     emit('sync-done')
   } catch (e) {
