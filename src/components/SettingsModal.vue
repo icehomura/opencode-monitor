@@ -79,7 +79,7 @@
               </div>
               <div class="settings-row">
                 <span class="settings-label">同步间隔（秒）</span>
-                <BaseInput v-model.number="intervalSecs" type="number" spinner :min="2" :max="3600" />
+                <BaseInput v-model.number="intervalSecs" type="number" spinner :min="10" :max="3600" />
               </div>
             </div>
             <template #hint>
@@ -315,7 +315,7 @@ const tabs = [
 
 // ── 账户 ──
 const baseUrl = ref('https://opencode.ai/console/api')
-const intervalSecs = ref(5)
+const intervalSecs = ref(30)
 const syncing = ref(false)
 const msg = ref('')
 const msgType = ref('')
@@ -339,7 +339,7 @@ async function loadSettings() {
   try {
     const s = await invoke('get_settings')
     baseUrl.value = s?.base_url || 'https://opencode.ai/console/api'
-    intervalSecs.value = s?.incremental_secs || 5
+    intervalSecs.value = s?.incremental_secs || 30
   } catch {}
   await loadQuota()
   await loadSync()
@@ -453,7 +453,7 @@ function scheduleSettings() {
     try {
       await invoke('save_settings', {
         baseUrl: baseUrl.value,
-        incrementalSecs: Number(intervalSecs.value) || 5,
+        incrementalSecs: Number(intervalSecs.value) || 30,
       })
       msg.value = '✓ 已保存'; msgType.value = 'ok'
     } catch (e) { msg.value = String(e); msgType.value = 'err' }
