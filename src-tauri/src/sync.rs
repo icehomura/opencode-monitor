@@ -8,6 +8,7 @@
 use crate::opencode::Quota;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::RwLock;
 use tauri::{AppHandle, Emitter};
 
@@ -29,6 +30,37 @@ static STATUS: RwLock<Option<SyncStatus>> = RwLock::new(None);
 /// 每个账号的额度缓存（key = account_id）。
 static QUOTAS: RwLock<Option<HashMap<String, Quota>>> = RwLock::new(None);
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// 命中限流 / 服务端错误后的冷却截止时间（毫秒时间戳）。冷却期内不再发起 API 调用。
+static COOLDOWN_UNTIL: AtomicI64 = AtomicI64::new(0);
+
+/// 限流后的冷却时长（秒）。
+const COOLDOWN_SECS: i64 = 120;
+
+/// 冷却剩余秒数（0 = 不在冷却）。
+pub fn cooldown_left_secs() -> i64 {
+    let left = COOLDOWN_UNTIL.load(Ordering::Relaxed) - chrono::Utc::now().timestamp_millis();
+    if left > 0 { left / 1000 + 1 } else { 0 }
+}
+
+/// 进入冷却（并说明原因）。
+fn start_cooldown(err: &str) {
+    COOLDOWN_UNTIL.store(
+        chrono::Utc::now().timestamp_millis() + COOLDOWN_SECS * 1000,
+        Ordering::Relaxed,
+    );
+    write_status(|st| {
+        st.last_error = Some(format!("{err}；已暂停请求 {COOLDOWN_SECS} 秒以降低频率"))
+    });
+}
+
+/// 该错误是否值得退避（限流 / 服务端错误 / 网络抖动）。
+fn needs_backoff(err: &str) -> bool {
+    err.contains("429")
+        || err.contains("HTTP 5")
+        || err.contains("网络请求失败")
+        || err.contains("timed out")
+}
 
 fn read_status() -> SyncStatus {
     STATUS
@@ -104,7 +136,16 @@ pub async fn refresh_quota(
     account: &crate::accounts::Account,
     app: Option<&AppHandle>,
 ) -> Result<Quota, String> {
-    let q = account.session()?.go_status().await?;
+    let left = cooldown_left_secs();
+    if left > 0 {
+        return Err(format!("限流冷却中（{left} 秒后恢复）"));
+    }
+    let q = account.session()?.go_status().await.map_err(|e| {
+        if needs_backoff(&e) {
+            start_cooldown(&e);
+        }
+        e
+    })?;
     set_quota_for(&account.id, Some(q.clone()));
     if let Some(app) = app {
         emit(app, "quota-updated");
@@ -130,7 +171,13 @@ async fn pull_request_log_pages(
         }
         let page = sc
             .request_logs_page(since, Some(until), cursor.as_deref(), 100)
-            .await?;
+            .await
+            .map_err(|e| {
+                if needs_backoff(&e) {
+                    start_cooldown(&e);
+                }
+                e
+            })?;
         if page.items.is_empty() {
             break;
         }
@@ -144,6 +191,8 @@ async fn pull_request_log_pages(
             Some(c) if !c.is_empty() => cursor = Some(c),
             _ => break,
         }
+        // 分页之间留间隔：首次全量要拉几十页，避免对服务端形成突发压力。
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
     Ok((total, max_started))
 }
@@ -155,6 +204,11 @@ pub async fn sync_request_logs(
     full: bool,
     app: Option<&AppHandle>,
 ) -> Result<usize, String> {
+    let left = cooldown_left_secs();
+    if left > 0 {
+        write_status(|st| st.source_note = format!("限流冷却中（{left}s）"));
+        return Ok(0);
+    }
     let sc = account.session()?;
     let _guard = SYNC_LOCK.lock().await;
     write_status(|st| st.syncing = true);
@@ -269,8 +323,13 @@ pub fn spawn_loop(app: AppHandle) {
         }
 
         loop {
-            let secs = crate::incremental_secs().max(2);
+            let secs = crate::incremental_secs().max(10);
             tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+            // 限流冷却期内不发起任何请求
+            if cooldown_left_secs() > 0 {
+                emit(&app, "sync-status");
+                continue;
+            }
             for acc in crate::accounts::list() {
                 if !acc.logged_in() {
                     continue;

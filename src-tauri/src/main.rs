@@ -94,13 +94,14 @@ pub(crate) fn base_url() -> String {
     base.unwrap_or_else(|| opencode::DEFAULT_BASE_URL.to_string())
 }
 
-/// 增量同步间隔（秒），默认 5，夹在 2~3600。
+/// 增量同步间隔（秒）：默认 30，夹在 10~3600。
+/// 有意保守——按分钟级刷新够用，避免对服务端造成不必要的压力。
 pub(crate) fn incremental_secs() -> u64 {
     read_config_value()
         .get("incremental_secs")
         .and_then(|v| v.as_u64())
-        .filter(|v| *v >= 2)
-        .unwrap_or(5)
+        .filter(|v| *v >= 10)
+        .unwrap_or(30)
         .min(3600)
 }
 
@@ -142,7 +143,7 @@ fn save_settings(base_url: String, incremental_secs: u64) -> Result<serde_json::
     };
     update_config_value(|v| {
         v["base_url"] = json!(base);
-        v["incremental_secs"] = json!(incremental_secs.clamp(2, 3600));
+        v["incremental_secs"] = json!(incremental_secs.clamp(10, 3600));
     })?;
     Ok(json!({ "ok": true }))
 }
