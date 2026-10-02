@@ -1,0 +1,626 @@
+{
+ "models": [
+  {
+   "id": "glm-5.3-flash",
+   "name": "GLM-5.3-Flash",
+   "tokens_per_request": {
+    "input": 1000,
+    "cached": 55000,
+    "output": 200
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 6320,
+    "req_week": 15790,
+    "req_month": 31580
+   },
+   "go_plus": {
+    "usd": 180,
+    "req_5h": 18960,
+    "req_week": 47370,
+    "req_month": 94740
+   }
+  },
+  {
+   "id": "glm-5.3",
+   "name": "GLM-5.3",
+   "tokens_per_request": {
+    "input": 700,
+    "cached": 52000,
+    "output": 150
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 220,
+    "req_week": 540,
+    "req_month": 1080
+   },
+   "go_plus": {
+    "usd": 120,
+    "req_5h": 1760,
+    "req_week": 4320,
+    "req_month": 8640
+   }
+  },
+  {
+   "id": "glm-5.2",
+   "name": "GLM-5.2",
+   "tokens_per_request": {
+    "input": 700,
+    "cached": 52000,
+    "output": 150
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 880,
+    "req_week": 2150,
+    "req_month": 4300
+   },
+   "go_plus": {
+    "usd": 180,
+    "req_5h": 2640,
+    "req_week": 6450,
+    "req_month": 12900
+   }
+  },
+  {
+   "id": "kimi-k3",
+   "name": "Kimi K3",
+   "tokens_per_request": {
+    "input": 1050,
+    "cached": 76500,
+    "output": 300
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 110,
+    "req_week": 250,
+    "req_month": 490
+   },
+   "go_plus": {
+    "usd": 60,
+    "req_5h": 440,
+    "req_week": 1000,
+    "req_month": 1960
+   }
+  },
+  {
+   "id": "kimi-k2.7-code",
+   "name": "Kimi K2.7 Code",
+   "tokens_per_request": {
+    "input": 870,
+    "cached": 55000,
+    "output": 200
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 1350,
+    "req_week": 3380,
+    "req_month": 6750
+   },
+   "go_plus": {
+    "usd": 180,
+    "req_5h": 4050,
+    "req_week": 10140,
+    "req_month": 20250
+   }
+  },
+  {
+   "id": "kimi-k2.6",
+   "name": "Kimi K2.6",
+   "tokens_per_request": {
+    "input": 870,
+    "cached": 55000,
+    "output": 200
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 1150,
+    "req_week": 2880,
+    "req_month": 5750
+   },
+   "go_plus": {
+    "usd": 240,
+    "req_5h": 4600,
+    "req_week": 11520,
+    "req_month": 23000
+   }
+  },
+  {
+   "id": "longcat-2.0",
+   "name": "LongCat-2.0",
+   "tokens_per_request": {
+    "input": 920,
+    "cached": 88900,
+    "output": 200
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 11400,
+    "req_week": 28600,
+    "req_month": 57200
+   },
+   "go_plus": {
+    "usd": 240,
+    "req_5h": 45600,
+    "req_week": 114400,
+    "req_month": 228800
+   }
+  },
+  {
+   "id": "longcat-2.5-preview-free",
+   "name": "LongCat 2.5 Preview Free",
+   "tokens_per_request": null,
+   "go": {
+    "usd": -1,
+    "req_5h": -1,
+    "req_week": -1,
+    "req_month": -1
+   },
+   "go_plus": {
+    "usd": -1,
+    "req_5h": -1,
+    "req_week": -1,
+    "req_month": -1
+   }
+  },
+  {
+   "id": "mimo-v2.6-flash",
+   "name": "MiMo-V2.6-Flash",
+   "tokens_per_request": {
+    "input": 830,
+    "cached": 71500,
+    "output": 295
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 30100,
+    "req_week": 75200,
+    "req_month": 150400
+   },
+   "go_plus": {
+    "usd": 120,
+    "req_5h": 60200,
+    "req_week": 150400,
+    "req_month": 300800
+   }
+  },
+  {
+   "id": "mimo-v2.6-pro",
+   "name": "MiMo-V2.6-Pro",
+   "tokens_per_request": {
+    "input": 790,
+    "cached": 86000,
+    "output": 305
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 3250,
+    "req_week": 8150,
+    "req_month": 16300
+   },
+   "go_plus": {
+    "usd": 60,
+    "req_5h": 13000,
+    "req_week": 32600,
+    "req_month": 65200
+   }
+  },
+  {
+   "id": "mimo-v2.5",
+   "name": "MiMo-V2.5",
+   "tokens_per_request": {
+    "input": 830,
+    "cached": 71500,
+    "output": 295
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 30100,
+    "req_week": 75200,
+    "req_month": 150400
+   },
+   "go_plus": {
+    "usd": 120,
+    "req_5h": 60200,
+    "req_week": 150400,
+    "req_month": 300800
+   }
+  },
+  {
+   "id": "mimo-v2.5-pro",
+   "name": "MiMo-V2.5-Pro",
+   "tokens_per_request": {
+    "input": 790,
+    "cached": 86000,
+    "output": 305
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 3250,
+    "req_week": 8150,
+    "req_month": 16300
+   },
+   "go_plus": {
+    "usd": 60,
+    "req_5h": 13000,
+    "req_week": 32600,
+    "req_month": 65200
+   }
+  },
+  {
+   "id": "minimax-m3",
+   "name": "MiniMax M3",
+   "tokens_per_request": {
+    "input": 510,
+    "cached": 56000,
+    "output": 190
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 3200,
+    "req_week": 8000,
+    "req_month": 16000
+   },
+   "go_plus": {
+    "usd": 180,
+    "req_5h": 9600,
+    "req_week": 24000,
+    "req_month": 48000
+   }
+  },
+  {
+   "id": "minimax-m2.7",
+   "name": "MiniMax M2.7",
+   "tokens_per_request": {
+    "input": 300,
+    "cached": 55000,
+    "output": 125
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 3400,
+    "req_week": 8500,
+    "req_month": 17000
+   },
+   "go_plus": {
+    "usd": 240,
+    "req_5h": 13600,
+    "req_week": 34000,
+    "req_month": 68000
+   }
+  },
+  {
+   "id": "muse-spark-1.3-contributor",
+   "name": "Muse Spark 1.3 Contributor",
+   "tokens_per_request": {
+    "input": 620,
+    "cached": 71400,
+    "output": 300
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 45300,
+    "req_week": 113300,
+    "req_month": 226600
+   },
+   "go_plus": {
+    "usd": 120,
+    "req_5h": 90600,
+    "req_week": 226600,
+    "req_month": 453200
+   }
+  },
+  {
+   "id": "muse-spark-1.2-contributor",
+   "name": "Muse Spark 1.2 Contributor",
+   "tokens_per_request": {
+    "input": 620,
+    "cached": 71400,
+    "output": 300
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 45300,
+    "req_week": 113300,
+    "req_month": 226600
+   },
+   "go_plus": {
+    "usd": 120,
+    "req_5h": 90600,
+    "req_week": 226600,
+    "req_month": 453200
+   }
+  },
+  {
+   "id": "qwen3.8-max",
+   "name": "Qwen3.8 Max",
+   "tokens_per_request": {
+    "input": 420,
+    "cached": 66000,
+    "output": 200
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 160,
+    "req_week": 400,
+    "req_month": 810
+   },
+   "go_plus": {
+    "usd": 60,
+    "req_5h": 640,
+    "req_week": 1600,
+    "req_month": 3240
+   }
+  },
+  {
+   "id": "qwen3.8-flash",
+   "name": "Qwen3.8 Flash",
+   "tokens_per_request": {
+    "input": 600,
+    "cached": 58000,
+    "output": 200
+   },
+   "go": {
+    "usd": 30,
+    "req_5h": 5400,
+    "req_week": 13500,
+    "req_month": 27000
+   },
+   "go_plus": {
+    "usd": 90,
+    "req_5h": 16200,
+    "req_week": 40500,
+    "req_month": 81000
+   }
+  },
+  {
+   "id": "qwen3.7-plus",
+   "name": "Qwen3.7 Plus",
+   "tokens_per_request": {
+    "input": 500,
+    "cached": 57000,
+    "output": 190
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 4300,
+    "req_week": 10800,
+    "req_month": 21600
+   },
+   "go_plus": {
+    "usd": 180,
+    "req_5h": 12900,
+    "req_week": 32400,
+    "req_month": 64800
+   }
+  },
+  {
+   "id": "deepseek-v4.1-flash",
+   "name": "DeepSeek V4.1 Flash",
+   "tokens_per_request": {
+    "input": 410,
+    "cached": 71300,
+    "output": 310
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 26000,
+    "req_week": 65000,
+    "req_month": 130000
+   },
+   "go_plus": {
+    "usd": 120,
+    "req_5h": 52000,
+    "req_week": 130000,
+    "req_month": 260000
+   }
+  },
+  {
+   "id": "deepseek-v4-pro",
+   "name": "DeepSeek V4 Pro",
+   "tokens_per_request": {
+    "input": 750,
+    "cached": 82000,
+    "output": 290
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 1050,
+    "req_week": 2600,
+    "req_month": 5200
+   },
+   "go_plus": {
+    "usd": 60,
+    "req_5h": 4200,
+    "req_week": 10400,
+    "req_month": 20800
+   }
+  },
+  {
+   "id": "deepseek-v4-flash",
+   "name": "DeepSeek V4 Flash",
+   "tokens_per_request": {
+    "input": 410,
+    "cached": 71300,
+    "output": 310
+   },
+   "go": {
+    "usd": 30,
+    "req_5h": 13000,
+    "req_week": 32500,
+    "req_month": 65000
+   },
+   "go_plus": {
+    "usd": 120,
+    "req_5h": 52000,
+    "req_week": 130000,
+    "req_month": 260000
+   }
+  },
+  {
+   "id": "deepseek-v4-flash-vision-exp",
+   "name": "DeepSeek V4 Flash Vision Exp",
+   "tokens_per_request": {
+    "input": 410,
+    "cached": 71300,
+    "output": 310
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 6500,
+    "req_week": 16250,
+    "req_month": 32500
+   },
+   "go_plus": {
+    "usd": 60,
+    "req_5h": 26000,
+    "req_week": 65000,
+    "req_month": 130000
+   }
+  },
+  {
+   "id": "hy4-preview",
+   "name": "Hy4 preview",
+   "tokens_per_request": {
+    "input": 830,
+    "cached": 71500,
+    "output": 295
+   },
+   "go": {
+    "usd": 30,
+    "req_5h": 1350,
+    "req_week": 3380,
+    "req_month": 6770
+   },
+   "go_plus": {
+    "usd": 120,
+    "req_5h": 5400,
+    "req_week": 13520,
+    "req_month": 27080
+   }
+  },
+  {
+   "id": "hy3",
+   "name": "Hy3",
+   "tokens_per_request": {
+    "input": 830,
+    "cached": 71500,
+    "output": 295
+   },
+   "go": {
+    "usd": 60,
+    "req_5h": 4300,
+    "req_week": 10750,
+    "req_month": 21500
+   },
+   "go_plus": {
+    "usd": 240,
+    "req_5h": 17200,
+    "req_week": 43000,
+    "req_month": 86000
+   }
+  },
+  {
+   "id": "space-bunny-free",
+   "name": "Space Bunny Free",
+   "tokens_per_request": null,
+   "go": {
+    "usd": -1,
+    "req_5h": -1,
+    "req_week": -1,
+    "req_month": -1
+   },
+   "go_plus": {
+    "usd": -1,
+    "req_5h": -1,
+    "req_week": -1,
+    "req_month": -1
+   }
+  },
+  {
+   "id": "grok-4.7",
+   "name": "Grok 4.7",
+   "tokens_per_request": {
+    "input": 390,
+    "cached": 32500,
+    "output": 120
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 169,
+    "req_week": 423,
+    "req_month": 845
+   },
+   "go_plus": {
+    "usd": 60,
+    "req_5h": 676,
+    "req_week": 1692,
+    "req_month": 3380
+   }
+  },
+  {
+   "id": "grok-4.6",
+   "name": "Grok 4.6",
+   "tokens_per_request": {
+    "input": 390,
+    "cached": 32500,
+    "output": 120
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 169,
+    "req_week": 423,
+    "req_month": 845
+   },
+   "go_plus": {
+    "usd": 60,
+    "req_5h": 676,
+    "req_week": 1692,
+    "req_month": 3380
+   }
+  },
+  {
+   "id": "gpt-6-luna",
+   "name": "GPT 6 Luna",
+   "tokens_per_request": {
+    "input": 1000,
+    "cached": 50000,
+    "output": 220
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 4230,
+    "req_week": 10560,
+    "req_month": 21130
+   },
+   "go_plus": {
+    "usd": 60,
+    "req_5h": 16920,
+    "req_week": 42240,
+    "req_month": 84520
+   }
+  },
+  {
+   "id": "gpt-5.6-luna",
+   "name": "GPT 5.6 Luna",
+   "tokens_per_request": {
+    "input": 1000,
+    "cached": 50000,
+    "output": 220
+   },
+   "go": {
+    "usd": 15,
+    "req_5h": 2050,
+    "req_week": 5100,
+    "req_month": 10250
+   },
+   "go_plus": {
+    "usd": 60,
+    "req_5h": 8200,
+    "req_week": 20400,
+    "req_month": 41000
+   }
+  }
+ ]
+}
