@@ -47,7 +47,10 @@
               <div v-for="a in accounts" :key="a.id" class="acct-item">
                 <div class="acct-info">
                   <span class="acct-name">
-                    <span class="acct-title" :title="a.name">{{ a.name }}</span>
+                    <input v-if="renamingId === a.id" class="acct-rename" v-model="renameDraft"
+                      @keydown.enter.prevent="commitRename" @keydown.esc.prevent="cancelRename"
+                      @blur="commitRename" />
+                    <span v-else class="acct-title" title="双击可重命名" @dblclick="startRename(a)">{{ a.name }}</span>
                     <span v-if="a.is_primary" class="acct-badge">主账号</span>
                     <span class="acct-state" :class="{ on: a.logged_in }">{{ a.logged_in ? '已登录' : '未登录' }}</span>
                   </span>
@@ -60,7 +63,6 @@
                 </div>
                 <div class="acct-actions">
                   <BaseButton v-if="!a.is_primary" @click="setPrimaryAccount(a)">设为主账号</BaseButton>
-                  <BaseButton @click="editAccount(a)">编辑</BaseButton>
                   <BaseButton @click="reloginAccount(a)">重新登录</BaseButton>
                   <BaseButton @click="logoutAccount(a)" :disabled="!a.logged_in">退出登录</BaseButton>
                   <BaseButton variant="danger" @click="removeAccount(a)">删除</BaseButton>
@@ -276,17 +278,11 @@
       </div>
     </div>
 
-    <AccountEditModal
-      :visible="showAccountEdit"
-      :account="editingAccount"
-      @save="onAccountSave"
-      @close="closeAccountEdit"
-    />
   </Teleport>
 </template>
 
 <script setup>
-import { ref, watch, computed, onBeforeUnmount } from 'vue'
+import { ref, watch, computed, nextTick, onBeforeUnmount } from 'vue'
 import IconButton from './base/IconButton.vue'
 import BaseButton from './base/BaseButton.vue'
 import BaseInput from './base/BaseInput.vue'
@@ -294,7 +290,6 @@ import BaseToggle from './base/BaseToggle.vue'
 import SettingsCard from './SettingsCard.vue'
 import DdSelect from './DdSelect.vue'
 import ThemeIcon from './ThemeIcon.vue'
-import AccountEditModal from './AccountEditModal.vue'
 import { useTauri } from '../composables/useTauri'
 import { fmtUsd, fmtTokens, fmtDate, fmtAgo, fmtClock } from '../utils/format'
 import { version as pkgVersion } from '../../package.json'
@@ -340,8 +335,8 @@ const sync = ref({ syncing: false, last_sync_ms: 0, last_full_sync_ms: 0, last_e
 const accounts = ref([])
 const acctMsg = ref('')
 const acctMsgType = ref('')
-const editingAccount = ref(null)
-const showAccountEdit = ref(false)
+const renamingId = ref('')
+const renameDraft = ref('')
 const primaryAccount = computed(() => accounts.value.find((a) => a.is_primary) || null)
 const anyLoggedIn = computed(() => accounts.value.some((a) => a.logged_in))
 const loggedInCount = computed(() => accounts.value.filter((a) => a.logged_in).length)
@@ -653,7 +648,7 @@ watch(logRange, () => { logPage.value = 1; loadLogs() })
 watch(logAccount, () => { logPage.value = 1; loadLogs() })
 
 watch(() => props.visible, async (v) => {
-  if (!v) { closeAccountEdit(); return }
+  if (!v) { cancelRename(); return }
   _loading.value = true
   activeTab.value = 'account'
   msg.value = ''
@@ -748,7 +743,12 @@ async function checkForUpdate() {
 }
 .acct-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .acct-name { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); min-width: 0; }
-.acct-title { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-title { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.acct-rename {
+  width: 200px; max-width: 240px; font: inherit; color: var(--text);
+  background: var(--bg); border: 1px solid var(--blue); border-radius: 6px;
+  padding: 1px 6px; outline: none;
+}
 .acct-badge {
   font-size: 10px; font-weight: 500; color: var(--blue); white-space: nowrap;
   background: rgba(79,140,255,.12); border: 1px solid rgba(79,140,255,.30);
