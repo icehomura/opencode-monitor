@@ -669,7 +669,16 @@ fn resolve_login_target(
     if add_new {
         // 同一个工作区再登录一次就并入同一账号，避免重复条目
         let id = accounts::new_id(org_id);
-        let name = match accounts::find(&id) {
+        let existing = accounts::find(&id);
+        if let Some(acc) = &existing {
+            if acc.cookie.trim() == cookie.trim() {
+                return Err(format!(
+                    "没有检测到新的账号：登录窗口里的会话仍是「{}」。请在弹出窗口里登录另一个账号，或先「退出登录」再添加。",
+                    acc.display_name()
+                ));
+            }
+        }
+        let name = match existing {
             Some(a) if !a.name.trim().is_empty() => a.name.clone(),
             _ if !label.is_empty() => label,
             _ => format!("账号 {}", accounts::list().len() + 1),
