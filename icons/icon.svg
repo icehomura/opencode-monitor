@@ -4,37 +4,37 @@
       <stop offset="0" stop-color="#1e2b4f"/>
       <stop offset="1" stop-color="#0c1220"/>
     </linearGradient>
-    <linearGradient id="bar" x1="0" y1="1" x2="0" y2="0">
+    <linearGradient id="arc" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#2fbf8f"/>
-      <stop offset="1" stop-color="#4f8cff"/>
-    </linearGradient>
-    <linearGradient id="trend" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#35d0a5"/>
+      <stop offset="0.6" stop-color="#35d0a5"/>
       <stop offset="1" stop-color="#7ee0ff"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.28" cy="0.16" r="0.8">
-      <stop offset="0" stop-color="#4f8cff" stop-opacity="0.26"/>
+    <radialGradient id="glow" cx="0.5" cy="0.4" r="0.62">
+      <stop offset="0" stop-color="#4f8cff" stop-opacity="0.20"/>
       <stop offset="1" stop-color="#4f8cff" stop-opacity="0"/>
     </radialGradient>
   </defs>
 
-  <!-- dashboard tile -->
+  <!-- tile -->
   <rect x="88" y="88" width="848" height="848" rx="200" fill="url(#tile)"/>
   <rect x="88" y="88" width="848" height="848" rx="200" fill="url(#glow)"/>
   <rect x="89.5" y="89.5" width="845" height="845" rx="198.5" fill="none"
         stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
 
-  <!-- baseline -->
-  <rect x="224" y="766" width="576" height="18" rx="9" fill="#ffffff" fill-opacity="0.16"/>
+  <!-- dial track (half ring, opening downward) -->
+  <path d="M262 596 A 250 250 0 0 1 762 596" fill="none"
+        stroke="#ffffff" stroke-opacity="0.13" stroke-width="96" stroke-linecap="round"/>
 
-  <!-- ascending bars -->
-  <rect x="244" y="604" width="116" height="164" rx="34" fill="url(#bar)" fill-opacity="0.58"/>
-  <rect x="400" y="524" width="116" height="244" rx="34" fill="url(#bar)" fill-opacity="0.80"/>
-  <rect x="556" y="436" width="116" height="332" rx="34" fill="url(#bar)"/>
+  <!-- consumed portion (62% of the scale) -->
+  <path d="M262 596 A 250 250 0 0 1 604 364" fill="none"
+        stroke="url(#arc)" stroke-width="96" stroke-linecap="round"/>
 
-  <!-- rising trend line above the bars, with live end point -->
-  <path d="M296 444 L468 364 L640 284 L748 234" fill="none" stroke="url(#trend)"
-        stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="748" cy="234" r="58" fill="#0c1220" fill-opacity="0.92"/>
-  <circle cx="748" cy="234" r="40" fill="#7ee0ff"/>
+  <!-- needle + hub -->
+  <path d="M512 596 L586 410" fill="none" stroke="#eaf1ff" stroke-width="52" stroke-linecap="round"/>
+  <circle cx="512" cy="596" r="74" fill="#0c1220"/>
+  <circle cx="512" cy="596" r="46" fill="#eaf1ff"/>
+
+  <!-- scale ticks -->
+  <path d="M262 700 L262 660" fill="none" stroke="#ffffff" stroke-opacity="0.30" stroke-width="26" stroke-linecap="round"/>
+  <path d="M762 700 L762 660" fill="none" stroke="#ffffff" stroke-opacity="0.30" stroke-width="26" stroke-linecap="round"/>
 </svg>
