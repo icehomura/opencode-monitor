@@ -202,11 +202,19 @@ async fn sync_request_logs_now(full: bool) -> Result<serde_json::Value, String> 
 }
 
 /// 每个「用到的模型」的额度与实际用量（5h / 周 / 月）。
-/// 额度与用量都只取**主账号**口径（多账号下与标题栏 / 第二行卡片保持一致）。
+/// `account_id`：省略 = 主账号；空串 = 全部账号（用量合计、上限按各账号套餐求和）；否则指定账号。
 #[tauri::command]
-fn get_models() -> serde_json::Value {
+fn get_models(account_id: Option<String>) -> serde_json::Value {
     let primary = accounts::primary_id();
-    let q = sync::quota_for(&primary);
+    let arg = account_id.map(|s| s.trim().to_string());
+    let all_accounts = matches!(&arg, Some(s) if s.is_empty());
+    let one = match &arg {
+        Some(s) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    };
+    // 额度（窗口起点 / 产品类型）：指定账号 → 该账号；否则主账号
+    let quota_account = one.clone().unwrap_or_else(|| primary.clone());
+    let q = sync::quota_for(&quota_account).or_else(|| sync::quota_for(&primary));
     let product = q
         .as_ref()
         .map(|q| q.product.clone())
@@ -230,9 +238,17 @@ fn get_models() -> serde_json::Value {
         .and_then(|q| parse(&q.starts_at))
         .unwrap_or(now - 30 * 24 * 3600 * 1000);
 
-    let u5 = store::model_usage_since(start_5h, &primary);
-    let uw = store::model_usage_since(start_week, &primary);
-    let um = store::model_usage_since(start_month, &primary);
+    // 用量：空串 = 全部账号（store 里 `'' = 不过滤`）；省略 = 主账号
+    let usage_account = one.clone().unwrap_or_else(|| {
+        if all_accounts {
+            String::new()
+        } else {
+            primary.clone()
+        }
+    });
+    let u5 = store::model_usage_since(start_5h, &usage_account);
+    let uw = store::model_usage_since(start_week, &usage_account);
+    let um = store::model_usage_since(start_month, &usage_account);
 
     let mut used: Vec<String> = Vec::new();
     for list in [&u5, &uw, &um] {
@@ -256,22 +272,53 @@ fn get_models() -> serde_json::Value {
         }
     };
 
+    // 额度口径：单选 = 该账号；「全部账号」= 各账号按各自套餐求和（合计上限）
+    let scope: Vec<String> = if all_accounts {
+        accounts::list().into_iter().map(|a| a.id).collect()
+    } else {
+        vec![one.clone().unwrap_or_else(|| primary.clone())]
+    };
+    let scope_products: Vec<String> = scope
+        .iter()
+        .map(|id| {
+            sync::quota_for(id)
+                .map(|q| q.product)
+                .unwrap_or_else(|| product.clone())
+        })
+        .collect();
+
     let items: Vec<serde_json::Value> = used
         .iter()
         .map(|id| {
             let limit = models::lookup(id);
-            let plan = limit.map(|l| l.plan(&product));
+            let limit_json = limit.map(|m| {
+                let (mut usd, mut r5, mut rw, mut rm, mut unlimited) = (0i64, 0i64, 0i64, 0i64, false);
+                for p in &scope_products {
+                    let pl = m.plan(p);
+                    if pl.unlimited() {
+                        unlimited = true;
+                    }
+                    usd += pl.usd.max(0);
+                    r5 += pl.req_5h.max(0);
+                    rw += pl.req_week.max(0);
+                    rm += pl.req_month.max(0);
+                }
+                if unlimited {
+                    (usd, r5, rw, rm) = (-1, -1, -1, -1);
+                }
+                json!({
+                    "usd": usd,
+                    "req_5h": r5,
+                    "req_week": rw,
+                    "req_month": rm,
+                    "unlimited": unlimited
+                })
+            });
             json!({
                 "id": id,
                 "name": limit.map(|l| l.name.clone()).unwrap_or_else(|| id.clone()),
                 "known": limit.is_some(),
-                "limit": plan.map(|p| json!({
-                    "usd": p.usd,
-                    "req_5h": p.req_5h,
-                    "req_week": p.req_week,
-                    "req_month": p.req_month,
-                    "unlimited": p.unlimited()
-                })),
+                "limit": limit_json,
                 "tokens_per_request": limit.and_then(|l| l.tokens_per_request.clone()),
                 "usage": {
                     "five_hour": find(&u5, id),
@@ -282,7 +329,7 @@ fn get_models() -> serde_json::Value {
         })
         .collect();
 
-    json!({ "product": product, "models": items })
+    json!({ "product": product, "account_id": usage_account, "models": items })
 }
 
 /// 逐条请求日志分页；`account_id` 为空表示所有账号。
