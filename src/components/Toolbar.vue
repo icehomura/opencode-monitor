@@ -12,11 +12,8 @@
     <div class="toolbar-right">
       <span class="local-text">新增 {{ sync.last_added || 0 }} 条</span>
       <span class="local-text">本地 {{ sync.local_rows || 0 }} 条</span>
-      <BaseButton @click="doSync(false)" :disabled="!login.logged_in || sync.syncing">
+      <BaseButton @click="doSync()" :disabled="!login.logged_in || sync.syncing">
         {{ sync.syncing ? '同步中…' : '立即同步' }}
-      </BaseButton>
-      <BaseButton variant="primary" @click="doSync(true)" :disabled="!login.logged_in || sync.syncing">
-        全量同步
       </BaseButton>
       <DdSelect :options="rangeOptions" :modelValue="range" @update:modelValue="$emit('range-change', $event)" />
     </div>
@@ -58,10 +55,10 @@ const statusText = computed(() => {
   return `已同步 · ${fmtAgo(props.sync.last_sync_ms)} · ${fmtClock(props.sync.last_sync_ms)}`
 })
 
-async function doSync(full) {
+async function doSync() {
   msg.value = ''
   try {
-    const r = await invoke('sync_request_logs_now', { full })
+    const r = await invoke('sync_request_logs_now', { full: false })
     msg.value = `✓ 已处理 ${r.rows} 条`
     emit('sync-done')
   } catch (e) {
