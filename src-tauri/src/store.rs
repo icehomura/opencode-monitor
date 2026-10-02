@@ -452,11 +452,10 @@ pub fn rpm_stats(window_ms: i64) -> RpmStats {
 
     let total: i64 = per_minute.iter().map(|(_, c)| *c).sum();
     let peak = per_minute.iter().map(|(_, c)| *c).max().unwrap_or(0);
-    // 当前 = 上一个完整分钟
-    let target = minute_floor - 60_000;
+    // 当前 = 正在进行的这一分钟（未走完，随同步刷新）
     let current = per_minute
         .iter()
-        .find(|(m, _)| *m == target)
+        .find(|(m, _)| *m == minute_floor)
         .map(|(_, c)| *c)
         .unwrap_or(0);
     let last_5m: i64 = per_minute
@@ -585,19 +584,18 @@ pub struct MinuteTokens {
     pub cache_read_tokens: i64,
 }
 
-/// 上一个完整分钟的词元数（用于「当前分钟」卡）。
-pub fn last_minute_tokens() -> MinuteTokens {
+/// 当前这一分钟（未走完）的词元数（用于「当前分钟」卡），随每次刷新增长。
+pub fn current_minute_tokens() -> MinuteTokens {
     let now = chrono::Utc::now().timestamp_millis();
     let minute_floor = (now / 60_000) * 60_000;
-    let start = minute_floor - 60_000;
     let mut out = MinuteTokens::default();
     with_conn(|conn| {
         out = conn
             .query_row(
                 "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
                         COALESCE(SUM(cache_read_tokens),0)
-                 FROM request_log WHERE started_at_ms >= ?1 AND started_at_ms < ?2",
-                params![start, minute_floor],
+                 FROM request_log WHERE started_at_ms >= ?1",
+                params![minute_floor],
                 |r| Ok(MinuteTokens {
                     input_tokens: r.get(0)?,
                     output_tokens: r.get(1)?,

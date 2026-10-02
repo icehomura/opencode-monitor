@@ -380,7 +380,7 @@ async fn get_dashboard(range: String) -> serde_json::Value {
         "series": series,
         "summary": serde_json::Value::Null,
         "window_stats": store::window_stats(since),
-        "minute": store::last_minute_tokens(),
+        "minute": store::current_minute_tokens(),
         "local_rows": local_rows,
         "local_cost_micro_cents": local_cost,
     })
