@@ -6,6 +6,7 @@
         <span class="plan-badge">{{ quota.plan_name }}</span>
         <span class="plan-expiry">到期 {{ fmtDate(quota.ends_at) }}</span>
         <span v-if="quota.cancel_at_period_end" class="plan-warn">到期后不再续费</span>
+        <span v-if="estimate" class="plan-estimate" :title="estimateTitle">预估可用 {{ estimate }}</span>
       </template>
       <span class="plan-badge muted" v-else>未配置</span>
     </div>
@@ -46,16 +47,78 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useTauri } from '../composables/useTauri'
 import { fmtDate } from '../utils/format'
 import IconButton from './base/IconButton.vue'
 
-defineProps({
+const props = defineProps({
   quota: { type: Object, default: null },
   configured: { type: Boolean, default: false },
 })
 defineEmits(['open-settings'])
+
+// ── 预估可用时长 ──
+// 速率直接来自额度计量：某窗口的 已用 microCents / 该窗口已过秒数。
+// /request-logs 的 cost 恒为 0，不能用来算速率。
+function windowRate(m, nowMs) {
+  if (!m || !m.starts_at) return 0
+  const used = Number(m.used_micro_cents || 0)
+  const elapsed = (nowMs - new Date(m.starts_at).getTime()) / 1000
+  if (used <= 0 || elapsed < 60) return 0
+  return used / elapsed
+}
+
+function burnRate() {
+  const q = props.quota
+  if (!q) return 0
+  const now = Date.now()
+  // 优先 5 小时窗口（响应最新消耗），再回退到周 / 月
+  return windowRate(q.five_hour, now) || windowRate(q.week, now) || windowRate(q.month, now) || 0
+}
+
+function fmtDuration(sec) {
+  sec = Math.max(0, Math.floor(sec))
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  if (d > 0) return `${d}天${h}小时${m}分`
+  if (h > 0) return `${h}小时${m}分`
+  if (m > 0) return `${m}分`
+  return `${sec}秒`
+}
+
+const estimate = computed(() => estimateInfo().text)
+const estimateTitle = computed(() => estimateInfo().title)
+
+function estimateInfo() {
+  const q = props.quota
+  if (!q) return { text: '', title: '' }
+  const rate = burnRate()
+  if (rate <= 0) return { text: '--', title: '额度窗口尚未开始消耗，无法估算' }
+  const now = Date.now()
+  const names = { five_hour: '5小时额度', week: '周额度', month: '月额度' }
+  const cands = []
+  for (const key of ['five_hour', 'week', 'month']) {
+    const m = q[key]
+    if (!m) continue
+    const remaining = Number(m.limit_micro_cents || 0) - Number(m.used_micro_cents || 0)
+    if (remaining <= 0) {
+      cands.push({ sec: 0, why: `${names[key]}已用尽` })
+      continue
+    }
+    const tExhaust = remaining / rate
+    const tReset = m.resets_at ? Math.max(0, (new Date(m.resets_at).getTime() - now) / 1000) : Infinity
+    // 重置前就能耗尽才算被它卡住；否则会先重置回血
+    if (tExhaust <= tReset) cands.push({ sec: tExhaust, why: `受${names[key]}限制` })
+  }
+  if (q.cancel_at_period_end && q.ends_at) {
+    cands.push({ sec: Math.max(0, (new Date(q.ends_at).getTime() - now) / 1000), why: '订阅到期' })
+  }
+  if (!cands.length) return { text: '充足', title: '按当前速率，额度会先重置，不会被耗尽' }
+  cands.sort((a, b) => a.sec - b.sec)
+  return { text: fmtDuration(cands[0].sec), title: `${cands[0].why}（按当前窗口平均速率估算）` }
+}
 
 const { getCurrentWindow } = useTauri()
 const win = getCurrentWindow()
@@ -126,6 +189,11 @@ onMounted(() => {
 .plan-warn {
   font-size: 11px; color: #f0a020; white-space: nowrap;
   background: rgba(240,160,32,.12); border: 1px solid rgba(240,160,32,.35);
+  border-radius: 10px; padding: 1px 8px;
+}
+.plan-estimate {
+  font-size: 11px; color: var(--blue); white-space: nowrap;
+  background: rgba(79,140,255,.12); border: 1px solid rgba(79,140,255,.30);
   border-radius: 10px; padding: 1px 8px;
 }
 .titlebar-actions { display: flex; height: 100%; }
