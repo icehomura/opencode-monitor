@@ -50,7 +50,7 @@
 | `incremental_secs` | 增量同步间隔（秒） | `5` |
 | `close_action` | 关闭按钮行为 `ask` / `minimize` / `quit` | `ask` |
 
-> 单账号时代的 `session_cookie` / `org_id` 会在启动时自动迁移成 `accounts` 里的第一个账号（主账号），旧字段清空。
+> 本地 SQLite 只是云端日志的缓存：schema 版本变化时会整库重建并重新同步，不做数据迁移。配置里旧的 `session_cookie` / `org_id` 字段已不再读取，升级后请到「设置 → 账户」重新登录一次。
 
 **文件位置**：
 

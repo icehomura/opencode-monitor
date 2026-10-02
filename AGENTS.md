@@ -72,8 +72,8 @@ opencode-monitor/
 ### 存储 (`store.rs`)
 - `usage_daily` 主键 `(account_id,day,user_type,user_id,provider,model)`（逐条日志按天聚合结果）
 - `request_log` 主键 `(account_id,id)`（逐条日志：tokens / status / started_at_ms）
-- `meta`：全局 `last_sync_ms`；账号维度 `last_sync_ms:<id>` / `last_full_sync_ms:<id>` / `last_requestlog_ms:<id>` / `initialized:<id>`
-- 旧库（无 `account_id`）启动时自动重建两张表并把老数据挂到主账号名下。
+- `meta`：全局 `last_sync_ms` / `schema_version`；账号维度 `last_sync_ms:<id>` / `last_full_sync_ms:<id>` / `last_requestlog_ms:<id>` / `initialized:<id>`
+- 本地库只是云端日志的缓存：`meta.schema_version` 与当前版本不一致时**整库重建**，由重新同步恢复，不做数据迁移。
 
 ### 同步 (`sync.rs`)
 - `sync_request_logs(account)` 拉 `/request-logs` 并按天聚合：全量窗口 30d、增量按该账号的 `last_requestlog_ms:<id>`。
