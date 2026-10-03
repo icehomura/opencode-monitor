@@ -1,4 +1,4 @@
-# OpenCode 云端 API 调研（用于 OpenCode Monitor）
+# OpenCode 云端 API 调研（用于 Usage Monitor 的 OpenCode 平台实现）
 
 > **说明**：本文件只记录本人登录会话下控制台接口的互操作性观察，用于本地只读展示；请勿据此做批量抓取或代他人访问。
 

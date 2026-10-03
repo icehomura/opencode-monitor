@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="icons/icon.png" alt="OpenCode Monitor" width="128">
+  <img src="icons/icon.png" alt="Usage Monitor" width="128">
 </p>
 
-<h1 align="center">OpenCode Monitor</h1>
+<h1 align="center">Usage Monitor</h1>
 
 <p align="center">
-  <strong>OpenCode Go / Go Plus 额度与用量监控</strong>：实时展示 5 小时 / 周 / 月额度，并把云端用量与逐条请求日志同步到本地 SQLite。
+  <strong>多平台订阅额度与用量监控</strong>（首个平台：OpenCode Go / Go Plus）：实时展示 5 小时 / 周 / 月额度，并把云端用量与逐条请求日志同步到本地 SQLite。
 </p>
 
 <p align="center">
-  <img src="docs/images/main-page-screenshot.png" alt="OpenCode Monitor 主界面：标题栏与工具栏、当前分钟与词元数卡片、时间窗口内统计、额度卡与模型请求限制、请求次数与词元图表" width="880">
+  <img src="docs/images/main-page-screenshot.png" alt="Usage Monitor 主界面：标题栏与工具栏、当前分钟与词元数卡片、时间窗口内统计、额度卡与模型请求限制、请求次数与词元图表" width="880">
 </p>
 
 <p align="center">
@@ -38,7 +38,7 @@
 - **汇率换算（可选）** — 设置 → 界面与系统里打开「显示人民币」开关后，界面上的金额按 **USD→CNY 汇率 ÷ 计划价值比（默认 6）** 显示为人民币，看到的是**真实花销**。
   - 汇率从公开接口自动获取（`open.er-api.com` → `frankfurter.app` → `jsdelivr/currency-api` 依次尝试，都不需要 Key），失败时可手动填写；换算只影响显示，不改动任何数据。
   - 本地化：美元符号在前（`$1.23`），人民币符号在后（`1.23¥`），都保留两位小数。
-- **多账号** — 支持添加多个 OpenCode 账号，**每个账号的数据独立存储**（按 `account_id` 隔离），后台逐个账号同步日志。
+- **多账号** — 支持添加多个账号（当前为 OpenCode），**每个账号的数据独立存储**（按 `account_id` 隔离），后台逐个账号同步日志。
   - 账号管理在 **设置 → 账户**：`+ 添加账号` 走控制台登录（新开窗口，登录后自动捕获会话）；可重命名、重新登录、退出登录、删除（可选清空本地数据）。
   - **主账号**：标题栏（计划 / 到期 / 预估可用时长）与第二行的额度卡（5 小时 / 本周 / 本月）显示主账号数据；**「当前模型请求限制」卡片右上角有账号下拉**（全部账号 / 各账号），可切换看哪个账号（「全部账号」= 用量合计、上限按各账号套餐求和）。图表与第一行卡片始终是所有账号的聚合。点击任意账号的「设为主账号」即可切换。
   - 账号行操作：设为主账号 / 重新登录 / 退出登录 / 删除；**双击账号名可重命名**（改的是本地显示名，账号身份由登录决定）。
@@ -51,11 +51,24 @@
 > **唯一鉴权：登录会话。** 额度 `/go/status`、用量汇总与逐条 `/request-logs` 全部依赖 WebView 登录后的会话 Cookie。
 > 程序**不使用 Service API Key**；未登录时没有数据，界面会提示到「设置 → 账户」登录。
 
+## 平台（Provider）
+
+数据来源已抽象成统一的**平台接口**（provider），每个平台是一份独立实现，界面与同步流程对平台无感知。
+
+| 平台 | 状态 | 鉴权 | 额度 | 逐条日志 |
+|---|---|---|---|---|
+| OpenCode | ✅ 已实现 | 控制台登录会话 Cookie（WebView 登录 + 工作区 id） | `GET /console/api/go/status` | `GET /console/api/request-logs`（cursor 分页） |
+| MiniMax | 🚧 待接入（占位） | 待定 | 待定 | 待定 |
+
+- 账号记录带 `provider` 字段，登录窗口与账号列表按平台区分；文中未特别说明处，本页面描述的均为 OpenCode 平台的行为。
+- MiniMax 目前只注册为可选平台：登录方式与接口尚未确定，登录页留空，额度与日志调用返回「尚未接入」。接口文档到位后按 [`docs/providers.md`](docs/providers.md) 的步骤补实现，无需改动调用方。
+
 ## 快速开始
 
 打开应用 → **设置 → 账户**：
 
 - 首次使用点「登录主账号」（或 `+ 添加账号`），弹出的窗口里完成登录 → 检测到会话后窗口**自动关闭**并保存（自动保存，没有「保存」按钮）。
+- 添加账号时先选平台（`opencode` / `minimax`）；当前只有 OpenCode 可用，MiniMax 显示为待接入。
 - 已有账号后，`+ 添加账号` 会新开一次登录流程；账号之间数据互不覆盖。
 - 「退出登录」清空该账号的会话 Cookie；「删除」可从列表移除账号（并可选清空其本地数据）。
 
@@ -63,11 +76,11 @@
 
 ## 配置
 
-配置文件 `opencode-monitor.json`（设置界面会自动写入；含敏感信息，已在 `.gitignore` 中忽略）：
+配置文件 `usage-monitor.json`（设置界面会自动写入；含敏感信息，已在 `.gitignore` 中忽略）：
 
 | 键 | 说明 | 默认 |
 |---|---|---|
-| `accounts` | 账号数组：`[{ id, name, org_id, cookie }]`（登录后自动写入） | `[]` |
+| `accounts` | 账号数组：`[{ id, name, provider, org_id, cookie }]`（登录后自动写入；`provider` 为 `opencode` / `minimax`） | `[]` |
 | `primary_account` | 主账号 id | 第一个账号 |
 | `base_url` | 控制台 API 基址 | `https://opencode.ai/console/api` |
 | `incremental_secs` | 增量同步间隔（秒，最小 10） | `30` |
@@ -80,8 +93,10 @@
 | 平台 | 位置 |
 |---|---|
 | Windows | exe 同目录 |
-| macOS | `~/Library/Application Support/com.icehomura.opencode-monitor/` |
+| macOS | `~/Library/Application Support/com.icehomura.usage-monitor/` |
 | Linux AppImage | `.AppImage` 同目录 |
+
+配置文件名为 `usage-monitor.json`，本地数据库文件名为 `usage-monitor-data.db`（与配置同目录）。
 
 ## 构建
 
@@ -93,11 +108,12 @@ bun run tauri build   # 打包
 
 ## 接口调研
 
-详见 [`docs/opencode-api-research.md`](docs/opencode-api-research.md)（含实测结果、CSV 表头、额度结构）。
+详见 [`docs/opencode-api-research.md`](docs/opencode-api-research.md)（含实测结果、CSV 表头、额度结构）；平台契约与新增平台步骤见 [`docs/providers.md`](docs/providers.md)。
 
 ## 已知限制
 
 - 仅登录会话可用：未登录时没有额度与日志数据。
 - 全量同步 = 最近 30 天逐条日志；增量按 `last_requestlog_ms` 续拉，天然幂等。
 - 会话 Cookie 会过期，过期后需重新登录。
-- 仅支持 OpenCode Go / Go Plus 订阅；其他计划 `go/status` 可能不可用。
+- OpenCode 平台：仅支持 Go / Go Plus 订阅，其他计划 `go/status` 可能不可用。
+- MiniMax 平台尚未接入（占位），登录方式与接口待定。

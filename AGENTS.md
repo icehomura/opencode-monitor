@@ -2,8 +2,7 @@
 
 ## Project Overview
 
-OpenCode Monitor 是一个基于 Tauri 2 的桌面应用，用于监控 **OpenCode Go / Go Plus** 订阅的额度与用量：
-从 OpenCode 控制台 API 读取实时额度，并把逐条请求日志同步到本地 SQLite（按天聚合）。
+Usage Monitor 是一个基于 Tauri 2 的**多平台**用量监控桌面应用：从各平台（首个实现为 OpenCode，监控 **OpenCode Go / Go Plus** 订阅）读取实时额度，并把逐条请求日志同步到本地 SQLite（按天聚合）。MiniMax 为占位平台，待接入。
 前端 Vue 3 + Vite，后端 Rust + SQLite (WAL)。
 
 ## 项目声明（给协作者 / Agent）
@@ -22,6 +21,23 @@ OpenCode Monitor 是一个基于 Tauri 2 的桌面应用，用于监控 **OpenCo
 - **Package Manager**: bun (前端), cargo (后端)
 - **IPC**: Tauri invoke / events (Rust <-> Vue)
 
+## 平台（Provider）
+
+数据来源已抽象成**平台接口**（provider）；OpenCode 是第一个实现，MiniMax 先占位。契约文件 `src-tauri/src/providers/mod.rs`：
+
+- `ProviderId`：`Opencode` / `Minimax`（serde 小写 `"opencode"` / `"minimax"`）；`as_str()` / `label()` / `implemented()` / `parse()`（大小写不敏感、去空白）/ `all()`。
+- `Credentials`：平台无关凭据 `{ cookie, org_id }`。
+- `UsageProvider` trait：`id()` / `login_url()` / `quota(&Credentials)` / `request_logs(&Credentials, since_ms, until_ms, cursor, limit)` / `probe_label(&Credentials)`。
+- `AnyProvider`：静态分发包装（async fn in trait 不能 dyn），提供同名方法，`AnyProvider::for_id(id)` 构造。
+
+| 平台 | 文件 | 状态 |
+|---|---|---|
+| OpenCode | `providers/opencode.rs` | 已实现：会话 Cookie + `x-org-id`，额度 `/go/status`，日志 `/request-logs` |
+| MiniMax | `providers/minimax.rs` | 占位：登录方式与接口待定，`login_url` 为空，额度 / 日志返回「尚未接入」错误 |
+
+- `Quota` / `RequestLogPage` / `RequestLog` / `CostPoint` 等数据类型定义在 `providers/opencode.rs`，跨平台共用。
+- 新增平台步骤见 [`docs/providers.md`](docs/providers.md)。
+
 ## 鉴权与多账号（重要）
 
 **只用登录会话（WebView 会话 Cookie）；程序不使用 Service API Key。**
@@ -33,16 +49,17 @@ OpenCode Monitor 是一个基于 Tauri 2 的桌面应用，用于监控 **OpenCo
 | 逐条日志 `/request-logs` | ✅ |
 
 - 额度、汇总、逐条日志全部依赖登录后的会话 Cookie；未登录时无数据。
-- 支持**多账号**：每个账号一份会话 Cookie，**数据按 `account_id` 隔离**，后台循环逐个账号同步。
+- 支持**多账号**：每个账号一份凭据（`provider` + 会话 Cookie），**数据按 `account_id` 隔离**，后台循环逐个账号同步。
 - **主账号**（`primary_account`）：标题栏（计划 / 到期 / 预估可用时长）与第二行的额度卡显示主账号数据；「当前模型请求限制」卡片自带账号下拉（`get_models({ accountId })`：省略 = 主账号，空串 = 全部账号，否则指定账号），默认「全部账号」。图表与第一行卡片是所有账号的聚合。
-- 添加账号 = 新开 WebView 登录（`open_login_window({ addNew: true })`）后 `capture_login` 落盘；
+- 添加账号 = 选平台后新开 WebView 登录（`open_login_window({ addNew: true, provider: "opencode" })`）后 `capture_login` 落盘；
   `logout` 删除 WebView Cookie 罐并清掉该账号凭据（账号条目保留，可用 `remove_account` 删除）。
+- 平台能力由 `AnyProvider` 分发：账号的 `provider` 决定用哪份实现；MiniMax 尚未接入（`login_url()` 为空、额度 / 日志返回「尚未接入」错误）。UI 用 `list_providers` 取平台清单。
 - 不读取 WebView 的 httpOnly Cookie 时，Windows 上必须在 **async 命令**里读（同步会死锁）。
 
 ## Project Structure
 
 ```
-opencode-monitor/
+usage-monitor/
 ├── src/
 │   ├── App.vue               # 根组件（TitleBar / Toolbar / StatsCards / UsageChart）
 │   ├── components/
@@ -59,7 +76,10 @@ opencode-monitor/
 ├── src-tauri/src/
 │   ├── main.rs               # 配置读写、命令注册、登录 WebView、托盘、关闭行为
 │   ├── accounts.rs           # 多账号凭据（accounts[] / primary_account / 登录落盘）
-│   ├── opencode.rs           # API 客户端：SessionClient(Cookie) + /request-logs 分页
+│   ├── providers/            # 平台接口与实现
+│   │   ├── mod.rs            # ProviderId / Credentials / UsageProvider / AnyProvider
+│   │   ├── opencode.rs       # OpenCode 实现：SessionClient(Cookie) + /request-logs 分页
+│   │   └── minimax.rs        # MiniMax 占位实现（待接口文档）
 │   ├── models.rs / models.json   # 官方文档的每模型额度表（内置）
 │   ├── store.rs              # SQLite：usage_daily / request_log / meta（都带 account_id）
 │   └── sync.rs               # 逐账号日志同步 + 额度刷新 + 后台循环
@@ -68,14 +88,15 @@ opencode-monitor/
 
 ## 后端要点
 
-### API 客户端 (`opencode.rs`)
+### API 客户端 (`providers/opencode.rs`)
 - `SessionClient`：`Cookie`（登录后完整 Cookie 头）+ `x-org-id`，浏览器 UA/Referer；
   `request_logs_page(since, until, cursor, limit)` 走 `/request-logs`（cursor 分页，limit ≤ 100）。
 - 401/403 有明确中文提示。
+- `/go/status` 额度解析与 `Quota` / `RequestLogPage` / `RequestLog` / `CostPoint` 等类型也在这里；MiniMax 只是复用这些类型。
 
 ### 账户 (`accounts.rs`)
-- 账号 = `{ id, name, org_id, cookie }`；`id` 优先用工作区 id（`org_...`）。
-- 账号列表存在 `opencode-monitor.json` 的 `accounts` 数组；单账号时代的 `session_cookie` / `org_id` **不再读取**（升级后需重新登录一次，不做配置迁移）。
+- 账号 = `{ id, name, provider, org_id, cookie }`；`provider` 取 `opencode` / `minimax`，`id` 优先用工作区 id（`org_...`）。
+- 账号列表存在 `usage-monitor.json` 的 `accounts` 数组；单账号时代的 `session_cookie` / `org_id` **不再读取**（升级后需重新登录一次，不做配置迁移）。
 
 ### 存储 (`store.rs`)
 - `request_log` 的 `cost_micro_cents`：`/request-logs` 的 `cost` 是**美元浮点**（实测如 `0.00113096`），
@@ -96,16 +117,16 @@ opencode-monitor/
   约定：**美元符号在前（`$1.23`），人民币符号在后（`1.23¥`）**，默认两位小数；开启换算时 `真实花销 = 美元 × 汇率 ÷ 6`（$10 计划得 $60 额度 ≈ 1:6）。只影响显示。
 
 ### 配置
-- `opencode-monitor.json`：`accounts`（数组）/ `primary_account` / `base_url` / `incremental_secs` / `close_action` / `exchange_rate` / `exchange_rate_at` / `exchange_rate_source`。
+- `usage-monitor.json`（本地库为 `usage-monitor-data.db`）：`accounts`（数组，每项带 `provider`）/ `primary_account` / `base_url` / `incremental_secs` / `close_action` / `exchange_rate` / `exchange_rate_at` / `exchange_rate_source`。
 - 读写走 `config_path()` + `read_config_value()` / `update_config_value()` 唯一入口。
 
 ## 命令列表
 
-`get_settings`、`save_settings`、`list_accounts`、`set_primary_account`、`rename_account`、`remove_account`、
+`get_settings`、`save_settings`、`list_accounts`、`set_primary_account`、`rename_account`、`remove_account`、`list_providers`、
 `get_quota`（可带 `accountId`）、`get_sync_status`、`sync_request_logs_now`、
 `get_dashboard`（可带 `sinceMs` / `untilMs`）、`get_request_logs`、`get_models`（可带 `accountId`）、`get_rpm`、
 `get_exchange_rate`、`set_exchange_rate`、
-`open_login_window`、`capture_login`、`login_status`、`logout`、
+`open_login_window`（可带 `addNew` / `provider`；省略 `provider` 用默认平台）、`capture_login`、`login_status`、`logout`、
 `get_close_action`、`set_close_action`、`get_autostart`、`set_autostart`。
 
 ## Build & Run
