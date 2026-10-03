@@ -8,6 +8,14 @@
   <strong>OpenCode Go / Go Plus 额度与用量监控</strong>：实时展示 5 小时 / 周 / 月额度，并把云端用量与逐条请求日志同步到本地 SQLite。
 </p>
 
+<p align="center">
+  <img src="docs/images/main-page-screenshot.png" alt="OpenCode Monitor 主界面：标题栏与工具栏、当前分钟与词元数卡片、时间窗口内统计、额度卡与模型请求限制、请求次数与词元图表" width="880">
+</p>
+
+<p align="center">
+  <sub>主界面：标题栏（计划 / 到期 / 预估可用）· 工具栏（同步状态 / 立即同步 / 时间范围）· 词元与额度卡片 · 请求次数与输出·输入·缓存图表</sub>
+</p>
+
 ## 声明
 
 本工具只是一个**本地只读的展示工具**：用你自己的登录会话，把你账号的额度与用量元数据（token 数 / 费用 / 状态码 / 模型名 / 时间）同步到本地 SQLite，再用卡片和图表展示出来。
