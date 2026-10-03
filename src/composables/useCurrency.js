@@ -3,8 +3,8 @@ import { reactive } from 'vue'
 /**
  * 汇率换算（显示层）：把界面上的美元金额按 `USD→CNY 汇率 / 换算系数` 显示成人民币。
  *
- * - 换算系数默认 6：买 $10 的计划得 $60 额度、$40 得 $240，价值比约 1:6，
- *   所以「真实花销」= 美元 × 汇率 ÷ 6。
+ * - 开关一：美元 → 人民币（× 汇率）；开关二：再 ÷ 计划价值比（默认 6，$10 计划得 $60 额度 ≈ 1:6），
+ *   两个都开就是「真实花销」= 美元 × 汇率 ÷ 6。
  * - 只影响显示，不改动任何数据；关闭开关即回到美元。
  * - 本地化：美元符号在前（`$1.23`），人民币符号在后（`1.23¥`），都保留两位小数。
  */
@@ -18,7 +18,10 @@ const saved = (() => {
 })()
 
 export const currency = reactive({
+  /** 开关一：是否把美元换算成人民币 */
   enabled: saved.enabled === true,
+  /** 开关二：是否再除以计划价值比（真实花销） */
+  valueRatio: saved.valueRatio !== false,
   /** USD → CNY */
   rate: Number(saved.rate) || 0,
   /** 计划价值比（默认 6） */
@@ -32,6 +35,7 @@ export const currency = reactive({
 export function persistCurrency() {
   localStorage.setItem(KEY, JSON.stringify({
     enabled: currency.enabled,
+    valueRatio: currency.valueRatio,
     rate: currency.rate,
     divisor: currency.divisor,
     source: currency.source,
@@ -44,9 +48,12 @@ export function currencyOn() {
   return currency.enabled && currency.rate > 0
 }
 
-/** 换算后的数值（人民币或美元）。 */
+/** 换算后的数值：开启汇率转换时先换算成人民币，再（可选）除以计划价值比。 */
 export function convert(usd) {
-  return currencyOn() ? (Number(usd || 0) * currency.rate) / (currency.divisor || 6) : Number(usd || 0)
+  const v = Number(usd || 0)
+  if (!currencyOn()) return v
+  const cny = v * currency.rate
+  return currency.valueRatio ? cny / (currency.divisor || 6) : cny
 }
 
 /** microCents 金额 → 显示字符串（两位小数）。 */
@@ -66,7 +73,7 @@ export function moneyFine(microCents) {
 
 function fmtMoney(usd, fine) {
   const on = currencyOn()
-  const v = on ? (usd * currency.rate) / (currency.divisor || 6) : usd
+  const v = convert(usd)
   const prefix = on ? '' : '$'
   const suffix = on ? '¥' : ''
   if (!fine) return prefix + v.toFixed(2) + suffix

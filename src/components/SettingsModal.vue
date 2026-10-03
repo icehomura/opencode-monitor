@@ -231,35 +231,48 @@
             </SettingsCard>
           </div>
 
-          <SettingsCard title="汇率换算（真实花销）"
-            description="按 USD→CNY 汇率换算，再除以计划价值比（$10 计划得 $60 额度 ≈ 1:6），得到真实花销">
-            <div class="toggle-row">
-              <BaseToggle v-model="currency.enabled" labelOn="显示人民币" labelOff="显示美元" />
-            </div>
-            <div class="settings-row">
-              <span class="settings-label">USD → CNY 汇率</span>
-              <span class="rate-value">{{ currency.rate ? currency.rate.toFixed(4) : '未获取' }}</span>
-              <BaseButton @click="fetchRate" :disabled="currency.loading">
-                {{ currency.loading ? '获取中…' : '获取最新' }}
-              </BaseButton>
-            </div>
-            <div class="settings-row">
-              <span class="settings-label">手动填写汇率</span>
-              <BaseInput v-model.number="rateInput" type="number" step="0.0001" />
-              <BaseButton @click="saveManualRate" :disabled="!rateInput">保存</BaseButton>
-            </div>
-            <div class="settings-row">
-              <span class="settings-label">计划价值比（÷）</span>
-              <BaseInput v-model.number="currency.divisor" type="number" spinner :min="1" :max="100" />
-            </div>
-            <div class="rate-preview">
-              $1.00 ≈ {{ convert(1).toFixed(2) }}¥
-              <span class="rate-meta" v-if="currency.at">· {{ currency.source || '手动' }} · {{ fmtAgo(currency.at) }}</span>
-            </div>
-            <template #hint>
-              <small :class="['ff-hint', rateMsgType]">{{ rateMsg }}</small>
-            </template>
-          </SettingsCard>
+          <div class="grid-2">
+            <SettingsCard title="汇率转换" description="把界面上的美元金额换算成人民币（公开汇率接口，只影响显示）">
+              <div class="toggle-row">
+                <BaseToggle v-model="currency.enabled" labelOn="显示人民币" labelOff="显示美元" />
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">USD → CNY 汇率</span>
+                <span class="rate-value">{{ currency.rate ? currency.rate.toFixed(4) : '未获取' }}</span>
+                <BaseButton @click="fetchRate" :disabled="currency.loading">
+                  {{ currency.loading ? '获取中…' : '获取最新' }}
+                </BaseButton>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">手动填写汇率</span>
+                <BaseInput v-model.number="rateInput" type="number" step="0.0001" />
+                <BaseButton @click="saveManualRate" :disabled="!rateInput">保存</BaseButton>
+              </div>
+              <div class="rate-preview">
+                $1.00 ≈ {{ rawCny(1) }}¥
+                <span class="rate-meta" v-if="currency.at">· {{ currency.source || '手动' }} · {{ fmtAgo(currency.at) }}</span>
+              </div>
+              <template #hint>
+                <small :class="['ff-hint', rateMsgType]">{{ rateMsg }}</small>
+              </template>
+            </SettingsCard>
+
+            <SettingsCard title="计划价值比" description="买 $10 的计划得 $60 额度、$40 得 $240，价值比约 1:6，用来还原真实花销">
+              <div class="toggle-row">
+                <BaseToggle v-model="currency.valueRatio" labelOn="除以 6" labelOff="不除" />
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">价值比（÷）</span>
+                <BaseInput v-model.number="currency.divisor" type="number" spinner :min="1" :max="100" />
+              </div>
+              <div class="rate-preview">
+                <template v-if="currency.enabled && currency.rate > 0">
+                  $1.00 的真实花销 ≈ {{ convert(1).toFixed(2) }}¥
+                </template>
+                <template v-else>开启「汇率转换」后生效</template>
+              </div>
+            </SettingsCard>
+          </div>
 
           <div class="grid-2">
             <SettingsCard title="关闭按钮行为" description="点击关闭按钮时的默认操作">
@@ -383,6 +396,12 @@ watch(() => currency.enabled, (on) => {
   if (on && !currency.rate) fetchRate()
 })
 watch(() => currency.divisor, () => persistCurrency())
+watch(() => currency.valueRatio, () => persistCurrency())
+
+/** 只做汇率换算、不除价值比的预览值。 */
+function rawCny(usd) {
+  return ((Number(usd || 0) * (currency.rate || 0))).toFixed(2)
+}
 watch(() => currency.rate, (v) => { rateInput.value = Number(v.toFixed(4)) })
 
 async function fetchRate() {
