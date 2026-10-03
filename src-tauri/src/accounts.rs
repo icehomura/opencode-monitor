@@ -1,13 +1,13 @@
 //! 多账号凭据管理。
 //!
-//! 账号列表存在 `opencode-monitor.json` 的 `accounts` 数组里，每个账号一份
+//! 账号列表存在 `usage-monitor.json` 的 `accounts` 数组里，每个账号一份
 //! 控制台会话 Cookie；`primary_account` 记录主账号 id。主账号的数据用于标题栏
 //! （计划 / 到期 / 预估可用时长）与第二行卡片（额度 / 模型请求限制），
 //! 其余账号只参与日志同步与图表聚合。
 //!
-//! 单账号时代的 `session_cookie` / `org_id` 会在启动时迁移成第一个账号（幂等）。
+//! 账号只存「平台 + 凭据」：具体怎么调接口由 `crate::providers` 里对应的平台实现负责。
 
-use crate::opencode::SessionClient;
+use crate::providers::{Credentials, ProviderId};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -20,6 +20,9 @@ pub struct Account {
     pub org_id: String,
     #[serde(default)]
     pub cookie: String,
+    /// 数据来源平台；老配置里没有该字段时默认 OpenCode。
+    #[serde(default)]
+    pub provider: ProviderId,
 }
 
 impl Account {
@@ -37,17 +40,17 @@ impl Account {
         self.id.clone()
     }
 
-    /// 该账号的会话客户端（未登录时报错）。
-    pub fn session(&self) -> Result<SessionClient, String> {
-        if !self.logged_in() {
-            return Err(format!("账号「{}」未登录", self.display_name()));
+    /// 平台显示名（OpenCode / MiniMax）。
+    pub fn provider_label(&self) -> &'static str {
+        self.provider.label()
+    }
+
+    /// 交给平台实现的凭据。
+    pub fn credentials(&self) -> Credentials {
+        Credentials {
+            cookie: self.cookie.clone(),
+            org_id: self.org_id.clone(),
         }
-        let org = self.org_id.trim();
-        Ok(SessionClient::new(
-            self.cookie.clone(),
-            crate::base_url(),
-            if org.is_empty() { None } else { Some(org.to_string()) },
-        ))
     }
 }
 

@@ -5,7 +5,8 @@
 //! 因此程序不再支持 Key 鉴权，未登录的账号直接跳过。
 //! 数据按 `account_id` 隔离，逐条日志主键 `(account_id, id)` 保证重复同步幂等。
 
-use crate::opencode::Quota;
+use crate::providers::opencode::Quota;
+use crate::providers::{AnyProvider, Credentials};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -140,7 +141,8 @@ pub async fn refresh_quota(
     if left > 0 {
         return Err(format!("限流冷却中（{left} 秒后恢复）"));
     }
-    let q = account.session()?.go_status().await.map_err(|e| {
+    let provider = AnyProvider::for_id(account.provider);
+    let q = provider.quota(&account.credentials()).await.map_err(|e| {
         if needs_backoff(&e) {
             start_cooldown(&e);
         }
@@ -155,7 +157,8 @@ pub async fn refresh_quota(
 
 /// 拉取逐条日志分页，返回 (写入行数, 最大 started_at_ms)。
 async fn pull_request_log_pages(
-    sc: &crate::opencode::SessionClient,
+    provider: &AnyProvider,
+    creds: &Credentials,
     account_id: &str,
     since: i64,
     until: i64,
@@ -169,8 +172,8 @@ async fn pull_request_log_pages(
         if pages > 600 {
             break;
         }
-        let page = sc
-            .request_logs_page(since, Some(until), cursor.as_deref(), 100)
+        let page = provider
+            .request_logs(creds, since, until, cursor.as_deref(), 100)
             .await
             .map_err(|e| {
                 if needs_backoff(&e) {
@@ -209,7 +212,8 @@ pub async fn sync_request_logs(
         write_status(|st| st.source_note = format!("限流冷却中（{left}s）"));
         return Ok(0);
     }
-    let sc = account.session()?;
+    let provider = AnyProvider::for_id(account.provider);
+    let creds = account.credentials();
     let _guard = SYNC_LOCK.lock().await;
     write_status(|st| st.syncing = true);
     let now = chrono::Utc::now().timestamp_millis();
@@ -232,7 +236,7 @@ pub async fn sync_request_logs(
     let mut max_started = since;
     let mut last_err: Option<String> = None;
     for w in windows {
-        match pull_request_log_pages(&sc, &account.id, w, now).await {
+        match pull_request_log_pages(&provider, &creds, &account.id, w, now).await {
             Ok((n, m)) => {
                 total = n;
                 max_started = m;

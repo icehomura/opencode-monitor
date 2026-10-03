@@ -6,7 +6,7 @@
 //!
 //! `meta` 表存同步水位；与账号相关的键带后缀（如 `last_requestlog_ms:<account_id>`）。
 
-use crate::opencode::UsageDailyRow;
+use crate::providers::opencode::UsageDailyRow;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::Mutex;
 
@@ -267,7 +267,7 @@ mod tests {
 // ──────────────── 逐条请求日志（会话授权后） ────────────────
 
 /// 写入逐条日志（按 `(account_id, id)` 幂等）。
-pub fn insert_request_logs(logs: &[crate::opencode::RequestLog], account_id: &str) -> usize {
+pub fn insert_request_logs(logs: &[crate::providers::opencode::RequestLog], account_id: &str) -> usize {
     if logs.is_empty() {
         return 0;
     }
@@ -566,7 +566,7 @@ pub fn query_request_logs(
     account_id: Option<&str>,
     page: u32,
     page_size: u32,
-) -> (Vec<crate::opencode::RequestLog>, u32) {
+) -> (Vec<crate::providers::opencode::RequestLog>, u32) {
     let page = page.max(1);
     let page_size = page_size.clamp(1, 200);
     let offset = (page - 1) * page_size;
@@ -591,7 +591,7 @@ pub fn query_request_logs(
         );
         if let Ok(mut stmt) = conn.prepare(&sql) {
             let mapped = stmt.query_map(params![since_ms, account_id], |row| {
-                Ok(crate::opencode::RequestLog {
+                Ok(crate::providers::opencode::RequestLog {
                     account_id: row.get(0)?,
                     id: row.get(1)?,
                     started_at_ms: row.get(2)?,

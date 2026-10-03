@@ -2,7 +2,7 @@
 
 mod accounts;
 mod models;
-mod opencode;
+mod providers;
 mod store;
 mod sync;
 
@@ -91,7 +91,7 @@ pub(crate) fn base_url() -> String {
         .and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.trim().to_string());
-    base.unwrap_or_else(|| opencode::DEFAULT_BASE_URL.to_string())
+    base.unwrap_or_else(|| providers::opencode::DEFAULT_BASE_URL.to_string())
 }
 
 /// 增量同步间隔（秒）：默认 30，夹在 10~3600。
@@ -126,7 +126,7 @@ fn get_settings() -> serde_json::Value {
         .get("base_url")
         .and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or(opencode::DEFAULT_BASE_URL);
+        .unwrap_or(providers::opencode::DEFAULT_BASE_URL);
     let rate = cfg.get("exchange_rate").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let rate_at = cfg.get("exchange_rate_at").and_then(|v| v.as_i64()).unwrap_or(0);
     let rate_src = cfg
@@ -147,7 +147,7 @@ fn get_settings() -> serde_json::Value {
 #[tauri::command]
 fn save_settings(base_url: String, incremental_secs: u64) -> Result<serde_json::Value, String> {
     let base = if base_url.trim().is_empty() {
-        opencode::DEFAULT_BASE_URL.to_string()
+        providers::opencode::DEFAULT_BASE_URL.to_string()
     } else {
         base_url.trim().to_string()
     };
@@ -549,7 +549,9 @@ async fn get_dashboard(
     let mut granularity = GRANULARITY;
     if series.is_empty() && !custom {
         fallback = true;
-        if let Some(c) = accounts::primary().and_then(|a| a.session().ok()) {
+        if let Some(acc) = accounts::primary().filter(|a| a.logged_in()) {
+            let provider = providers::AnyProvider::for_id(acc.provider);
+            let creds = acc.credentials();
             let (api_range, b) = match range.as_str() {
                 "today" => ("24h", "hour"),
                 "month" => ("30d", "day"),
@@ -558,8 +560,8 @@ async fn get_dashboard(
             };
             // 云端桶（hour/day）不是分钟，刻度必须跟着实际数据走
             granularity = if b == "hour" { "hour" } else { "day" };
-            series = c
-                .cost_by_day(api_range, b)
+            series = provider
+                .cost_by_day(&creds, api_range, b)
                 .await
                 .unwrap_or_default()
                 .iter()
@@ -631,70 +633,60 @@ fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
 
 // ──────── 会话授权（WebView 登录）───────
 
-/// 在任意 JSON 里递归找形如 `org_...` 的字符串（工作区 id）。
-fn extract_org_id(v: &serde_json::Value) -> Option<String> {
-    match v {
-        serde_json::Value::String(s) if s.starts_with("org_") || s.starts_with("wrk_") => {
-            Some(s.clone())
-        }
-        serde_json::Value::Array(a) => a.iter().find_map(extract_org_id),
-        serde_json::Value::Object(o) => o.values().find_map(extract_org_id),
-        _ => None,
-    }
+/// 待处理的登录请求：(是否新增账号, 目标账号 id, 平台)。
+static PENDING_LOGIN: std::sync::RwLock<Option<(bool, String, providers::ProviderId)>> =
+    std::sync::RwLock::new(None);
+
+fn set_pending_login(add_new: bool, account_id: String, provider: providers::ProviderId) {
+    *PENDING_LOGIN.write().unwrap_or_else(|e| e.into_inner()) = Some((add_new, account_id, provider));
 }
 
-/// 在工作区 / 用户信息里找一个可读名称（邮箱 / 名称 / slug），找不到就返回 None。
-fn extract_label(v: &serde_json::Value) -> Option<String> {
-    extract_label_at(v, 0)
-}
-
-fn extract_label_at(v: &serde_json::Value, depth: usize) -> Option<String> {
-    if depth > 2 {
-        return None;
-    }
-    if let Some(o) = v.as_object() {
-        for key in ["email", "name", "displayName", "slug"] {
-            if let Some(s) = o.get(key).and_then(|x| x.as_str()) {
-                let s = s.trim();
-                if !s.is_empty() {
-                    return Some(s.to_string());
-                }
-            }
-        }
-        for val in o.values() {
-            if let Some(found) = extract_label_at(val, depth + 1) {
-                return Some(found);
-            }
-        }
-    }
-    None
-}
-
-/// 待处理的登录请求：(是否新增账号, 目标账号 id)。
-static PENDING_LOGIN: std::sync::RwLock<Option<(bool, String)>> = std::sync::RwLock::new(None);
-
-fn set_pending_login(add_new: bool, account_id: String) {
-    *PENDING_LOGIN.write().unwrap_or_else(|e| e.into_inner()) = Some((add_new, account_id));
-}
-
-fn take_pending_login() -> (bool, String) {
+fn take_pending_login() -> (bool, String, providers::ProviderId) {
     PENDING_LOGIN
         .write()
         .unwrap_or_else(|e| e.into_inner())
         .take()
-        .unwrap_or((false, String::new()))
+        .unwrap_or((false, String::new(), providers::ProviderId::default()))
+}
+
+/// 支持的数据来源平台（前端「添加账号」的上半部分用它渲染选择）。
+#[tauri::command]
+fn list_providers() -> serde_json::Value {
+    let items: Vec<serde_json::Value> = providers::ProviderId::all()
+        .iter()
+        .map(|p| {
+            let provider = providers::AnyProvider::for_id(*p);
+            json!({
+                "id": provider.id().as_str(),
+                "label": p.label(),
+                "implemented": p.implemented(),
+                "login_url": provider.login_url(),
+            })
+        })
+        .collect();
+    json!({ "providers": items })
 }
 
 /// 打开（或聚焦）登录授权的 WebView 窗口。
-/// `add_new` = true 时登录结果会新建一个账号；否则写入 `account_id`（空 = 主账号）。
+/// `provider` 选择平台（省略 = OpenCode）；`add_new` = true 时登录结果会新建一个账号；
+/// 否则写入 `account_id`（空 = 主账号）。
 #[tauri::command]
 async fn open_login_window(
     app: tauri::AppHandle,
+    provider: Option<String>,
     add_new: Option<bool>,
     account_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let add_new = add_new.unwrap_or(false);
     let account_id = account_id.unwrap_or_default();
+    let provider_id = provider
+        .as_deref()
+        .and_then(providers::ProviderId::parse)
+        .unwrap_or_default();
+    if !provider_id.implemented() {
+        return Err(format!("{} 支持尚未接入", provider_id.label()));
+    }
+    let login_url = providers::AnyProvider::for_id(provider_id).login_url();
     // 需要换一个身份登录时先清 Cookie 罐：新增账号、指定账号未登录、或当前没有任何已登录账号
     let target_logged_in = if account_id.is_empty() {
         accounts::primary().map(|a| a.logged_in()).unwrap_or(false)
@@ -706,29 +698,28 @@ async fn open_login_window(
     if let Some(w) = app.get_webview_window("auth") {
         if need_clear {
             clear_one(&w);
-            if let Ok(url) = tauri::Url::parse("https://opencode.ai/console/") {
+            if let Ok(url) = tauri::Url::parse(login_url) {
                 let _ = w.navigate(url);
             }
         }
-        set_pending_login(add_new, account_id);
+        set_pending_login(add_new, account_id, provider_id);
         let _ = w.show();
         let _ = w.set_focus();
         return Ok(json!({ "opened": true, "existed": true, "add_new": add_new }));
     }
-    let url = tauri::Url::parse("https://opencode.ai/console/")
-        .map_err(|e| format!("无效登录地址：{e}"))?;
+    let url = tauri::Url::parse(login_url).map_err(|e| format!("无效登录地址：{e}"))?;
     tauri::WebviewWindowBuilder::new(
         &app,
         "auth",
         tauri::WebviewUrl::External(url),
     )
-    .title("登录 OpenCode")
+    .title(format!("登录 {}", provider_id.label()))
     .inner_size(1000.0, 780.0)
     .center()
     .build()
     .map_err(|e| format!("打开登录窗口失败：{e}"))?;
-    set_pending_login(add_new, account_id);
-    Ok(json!({ "opened": true, "existed": false, "add_new": add_new }))
+    set_pending_login(add_new, account_id, provider_id);
+    Ok(json!({ "opened": true, "existed": false, "add_new": add_new, "provider": provider_id.as_str() }))
 }
 
 /// 从登录窗口读取会话 Cookie。必须在 async 命令里调用（Windows 同步调用会死锁）。
@@ -764,35 +755,17 @@ async fn capture_login(app: tauri::AppHandle) -> Result<serde_json::Value, Strin
         .collect::<Vec<_>>()
         .join("; ");
 
-    // 多路尝试拿工作区 id 与可读名称（控制台所有请求都带 x-org-id，缺了可能 400）
-    let probe = opencode::SessionClient::new(cookie_header.clone(), base_url(), None);
-    let mut org_id = String::new();
-    let mut label = String::new();
-    for attempt in [
-        probe.orgs_current().await,
-        probe.orgs_list().await,
-        probe.user_info().await,
-    ] {
-        if let Ok(v) = attempt {
-            if org_id.is_empty() {
-                if let Some(id) = extract_org_id(&v) {
-                    org_id = id;
-                }
-            }
-            if label.is_empty() {
-                if let Some(t) = extract_label(&v) {
-                    label = t;
-                }
-            }
-            if !org_id.is_empty() && !label.is_empty() {
-                break;
-            }
-        }
-    }
+    // 平台探针：拿工作区 id 与可读名称（OpenCode 的请求都带 x-org-id，缺了可能 400）
+    let (add_new, target_id, provider_id) = take_pending_login();
+    let provider = providers::AnyProvider::for_id(provider_id);
+    let creds = providers::Credentials { cookie: cookie_header.clone(), org_id: String::new() };
+    let identity = provider.probe(&creds).await;
+    let label = identity.label.unwrap_or_default();
+    let org_id = identity.org_id.unwrap_or_default();
 
     // 写入目标账号：add_new = 新建；否则更新指定账号（空 = 主账号）
-    let (add_new, target_id) = take_pending_login();
-    let target_id = resolve_login_target(add_new, &target_id, &org_id, label, cookie_header)?;
+    let target_id =
+        resolve_login_target(add_new, &target_id, provider_id, &org_id, label, cookie_header)?;
 
     // 隐藏而非销毁：视觉上等同关闭，但保留句柄以便退出时清 Cookie 罐
     let _ = w.hide();
@@ -803,6 +776,7 @@ async fn capture_login(app: tauri::AppHandle) -> Result<serde_json::Value, Strin
 fn resolve_login_target(
     add_new: bool,
     target_id: &str,
+    provider: providers::ProviderId,
     org_id: &str,
     label: String,
     cookie: String,
@@ -829,6 +803,7 @@ fn resolve_login_target(
             name,
             org_id: org_id.to_string(),
             cookie,
+            provider,
         })?;
         if accounts::primary_id().is_empty() {
             accounts::set_primary(&id)?;
@@ -863,6 +838,7 @@ fn resolve_login_target(
                 name: if label.is_empty() { "主账号".into() } else { label },
                 org_id: org_id.to_string(),
                 cookie,
+                provider,
             })?;
             accounts::set_primary(&id)?;
         }
@@ -903,6 +879,8 @@ fn list_accounts() -> serde_json::Value {
                 "id": a.id,
                 "name": a.display_name(),
                 "org_id": a.org_id,
+                "provider": a.provider.as_str(),
+                "provider_label": a.provider_label(),
                 "logged_in": a.logged_in(),
                 "is_primary": a.id == primary,
                 "rows": rows,
@@ -1153,6 +1131,7 @@ fn main() {
             capture_login,
             login_status,
             logout,
+            list_providers,
             list_accounts,
             set_primary_account,
             rename_account,

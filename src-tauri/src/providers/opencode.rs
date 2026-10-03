@@ -5,6 +5,7 @@
 //! Service API Key（`Authorization: Bearer oc_sk_...`）已被废除：
 //! 它无法访问 `/request-logs`（恒 403），而逐条日志是本程序唯一的数据来源。
 
+use super::{Credentials, Identity, ProviderId, UsageProvider};
 use serde::Serialize;
 use serde_json::Value;
 use std::time::Duration;
@@ -191,6 +192,25 @@ mod tests {
         assert_eq!(micro.cost_micro_cents, 113_096, "已是 microCents 时按量级兜底");
         let none = RequestLog::from_json(&serde_json::json!({"cost": null}));
         assert_eq!(none.cost_micro_cents, 0);
+    }
+
+    #[test]
+    fn extract_org_id_finds_workspace_id() {
+        let v = serde_json::json!({"data": {"id": "org_abc123"}});
+        assert_eq!(extract_org_id(&v).as_deref(), Some("org_abc123"));
+        let v = serde_json::json!({"items": [{"id": "wrk_9"}]});
+        assert_eq!(extract_org_id(&v).as_deref(), Some("wrk_9"));
+        assert_eq!(extract_org_id(&serde_json::json!({"x": 1})), None);
+    }
+
+    #[test]
+    fn extract_label_prefers_email_and_respects_depth() {
+        let v = serde_json::json!({"data": {"user": {"email": "a@b.c", "name": "A"}}});
+        assert_eq!(extract_label(&v).as_deref(), Some("a@b.c"));
+        // 深度 > 2 的字段不再深入
+        let deep = serde_json::json!({"a": {"b": {"c": {"name": "too deep"}}}});
+        assert_eq!(extract_label(&deep), None);
+        assert_eq!(extract_label(&serde_json::json!({"name": "  "})), None);
     }
 }
 
@@ -438,5 +458,123 @@ impl SessionClient {
                 total_requests: num(p, "totalRequests"),
             })
             .collect())
+    }
+}
+
+// ──────────────── 登录探测辅助 ────────────────
+
+/// 在任意 JSON 里递归找形如 `org_...` 的字符串（工作区 id）。
+pub fn extract_org_id(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) if s.starts_with("org_") || s.starts_with("wrk_") => {
+            Some(s.clone())
+        }
+        serde_json::Value::Array(a) => a.iter().find_map(extract_org_id),
+        serde_json::Value::Object(o) => o.values().find_map(extract_org_id),
+        _ => None,
+    }
+}
+
+/// 在工作区 / 用户信息里找一个可读名称（邮箱 / 名称 / slug），找不到就返回 None。
+pub fn extract_label(v: &serde_json::Value) -> Option<String> {
+    extract_label_at(v, 0)
+}
+
+fn extract_label_at(v: &serde_json::Value, depth: usize) -> Option<String> {
+    if depth > 2 {
+        return None;
+    }
+    if let Some(o) = v.as_object() {
+        for key in ["email", "name", "displayName", "slug"] {
+            if let Some(s) = o.get(key).and_then(|x| x.as_str()) {
+                let s = s.trim();
+                if !s.is_empty() {
+                    return Some(s.to_string());
+                }
+            }
+        }
+        for val in o.values() {
+            if let Some(found) = extract_label_at(val, depth + 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+// ──────────────── 平台接口实现 ────────────────
+
+/// OpenCode 平台实现：凭据是控制台登录会话（Cookie + 工作区 id）。
+pub struct OpenCodeProvider;
+
+impl OpenCodeProvider {
+    /// 按平台凭据建一个会话客户端（`org_id` 为空时不带 `x-org-id`）。
+    fn session(&self, creds: &Credentials) -> SessionClient {
+        let org = if creds.org_id.trim().is_empty() {
+            None
+        } else {
+            Some(creds.org_id.clone())
+        };
+        SessionClient::new(creds.cookie.clone(), crate::base_url(), org)
+    }
+}
+
+impl UsageProvider for OpenCodeProvider {
+    fn id(&self) -> ProviderId {
+        ProviderId::Opencode
+    }
+
+    fn login_url(&self) -> &'static str {
+        "https://opencode.ai/console/"
+    }
+
+    async fn quota(&self, creds: &Credentials) -> Result<Quota, String> {
+        self.session(creds).go_status().await
+    }
+
+    async fn request_logs(
+        &self,
+        creds: &Credentials,
+        since_ms: i64,
+        until_ms: i64,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<RequestLogPage, String> {
+        self.session(creds)
+            .request_logs_page(since_ms, Some(until_ms), cursor, limit)
+            .await
+    }
+
+    async fn probe(&self, creds: &Credentials) -> Identity {
+        let client = self.session(creds);
+        let mut label = None;
+        let mut org_id = None;
+        for res in [
+            client.orgs_current().await,
+            client.orgs_list().await,
+            client.user_info().await,
+        ] {
+            if let Ok(v) = res {
+                if label.is_none() {
+                    label = extract_label(&v);
+                }
+                if org_id.is_none() {
+                    org_id = extract_org_id(&v);
+                }
+                if label.is_some() && org_id.is_some() {
+                    break;
+                }
+            }
+        }
+        Identity { label, org_id }
+    }
+
+    async fn cost_by_day(
+        &self,
+        creds: &Credentials,
+        range: &str,
+        bucket: &str,
+    ) -> Result<Vec<CostPoint>, String> {
+        self.session(creds).cost_by_day(range, bucket).await
     }
 }
