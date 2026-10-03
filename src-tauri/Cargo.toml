@@ -1,5 +1,5 @@
 [package]
-name = "opencode-monitor"
+name = "usage-monitor"
 version = "0.3.6"
 description = "OpenCode Go/Go Plus 用量与额度监控"
 edition = "2021"

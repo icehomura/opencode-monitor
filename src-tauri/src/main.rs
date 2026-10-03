@@ -21,7 +21,7 @@ pub(crate) fn app_data_override() -> Option<std::path::PathBuf> {
     let home = std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let dir = home.join("Library/Application Support/com.icehomura.opencode-monitor");
+    let dir = home.join("Library/Application Support/com.icehomura.usage-monitor");
     let _ = std::fs::create_dir_all(&dir);
     Some(dir)
 }
@@ -41,16 +41,16 @@ pub(crate) fn app_data_override() -> Option<std::path::PathBuf> {
 fn config_candidates() -> Vec<std::path::PathBuf> {
     let mut out: Vec<std::path::PathBuf> = Vec::new();
     if let Some(dir) = app_data_override() {
-        out.push(dir.join("opencode-monitor.json"));
+        out.push(dir.join("usage-monitor.json"));
     }
     out.extend(
         [
             std::env::current_exe().ok().map(|d| {
                 d.parent()
                     .unwrap_or(std::path::Path::new("."))
-                    .join("opencode-monitor.json")
+                    .join("usage-monitor.json")
             }),
-            std::env::current_dir().ok().map(|d| d.join("opencode-monitor.json")),
+            std::env::current_dir().ok().map(|d| d.join("usage-monitor.json")),
         ]
         .into_iter()
         .flatten(),
@@ -215,7 +215,7 @@ async fn get_exchange_rate() -> Result<serde_json::Value, String> {
     ];
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(12))
-        .user_agent("opencode-monitor")
+        .user_agent("usage-monitor")
         .build()
         .map_err(|e| format!("创建请求客户端失败：{e}"))?;
 
@@ -1043,7 +1043,7 @@ fn main() {
 
             TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("OpenCode Monitor")
+                .tooltip("Usage Monitor")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {

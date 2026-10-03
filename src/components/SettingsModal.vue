@@ -5,7 +5,7 @@
         <div class="modal-head">
           <div>
             <h2>设置</h2>
-            <p class="modal-sub">OpenCode 账户、日志同步与系统设置</p>
+            <p class="modal-sub">账户、日志同步与系统设置</p>
           </div>
           <IconButton class="modal-close" title="关闭" @click="$emit('close')">
             <span style="font-size:15px">✕</span>
@@ -208,9 +208,9 @@
           <div class="grid-2">
             <SettingsCard title="关于">
               <div class="about-row">
-                <img :src="iconUrl" alt="OpenCode Monitor" class="about-icon" />
+                <img :src="iconUrl" alt="Usage Monitor" class="about-icon" />
                 <div class="about-info">
-                  <span class="about-name">OpenCode Monitor</span>
+                  <span class="about-name">Usage Monitor</span>
                   <span class="about-version">v{{ appVersion }}</span>
                 </div>
               </div>
@@ -751,7 +751,7 @@ function switchTab(id) {
 async function checkForUpdate() {
   updateMsg.value = '检查中…'; updateMsgType.value = ''
   try {
-    const resp = await fetch('https://api.github.com/repos/icehomura/opencode-monitor/releases/latest')
+    const resp = await fetch('https://api.github.com/repos/icehomura/usage-monitor/releases/latest')
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const data = await resp.json()
     const latestTag = (data.tag_name || '').replace(/^v/, '')

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenCode Monitor",
+  "productName": "Usage Monitor",
   "version": "0.3.6",
-  "identifier": "com.icehomura.opencode-monitor",
+  "identifier": "com.icehomura.usage-monitor",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "OpenCode Monitor - Go 额度与用量",
+        "title": "Usage Monitor - 用量与额度监控",
         "width": 1100,
         "height": 640,
         "minWidth": 800,

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/acl-manifests.json",
   "identifier": "default",
-  "description": "OpenCode Monitor 默认能力：无边框窗口的拖动/最小化/最大化/置顶/关闭到托盘",
+  "description": "Usage Monitor 默认能力：无边框窗口的拖动/最小化/最大化/置顶/关闭到托盘",
   "windows": ["main"],
   "permissions": [
     "core:default",

@@ -9,7 +9,7 @@
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
         </div>
-        <h3 class="close-dialog-title">关闭 OpenCode Monitor？</h3>
+        <h3 class="close-dialog-title">关闭 Usage Monitor？</h3>
         <p class="close-dialog-desc">关闭后后台的额度刷新与日志同步将暂停</p>
 
         <div class="close-dialog-options">

@@ -1,7 +1,7 @@
 <template>
   <div class="titlebar" :class="{ 'titlebar--mac': isMac }" ref="titlebarRef" @mousedown="tryDrag" @dblclick="onDblClick">
     <div class="titlebar-brand">
-      <strong>OpenCode Monitor</strong>
+      <strong>Usage Monitor</strong>
       <template v-if="quota">
         <span class="plan-badge">{{ quota.plan_name }}</span>
         <span class="plan-expiry">到期 {{ fmtDate(quota.ends_at) }}</span>

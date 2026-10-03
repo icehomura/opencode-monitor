@@ -196,7 +196,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: "OpenCode Monitor ${{ steps.tag.outputs.tag }}"
+          name: "Usage Monitor ${{ steps.tag.outputs.tag }}"
           files: |
             artifacts/windows/**/*.exe
             artifacts/macos-x64/**/*.dmg
@@ -252,7 +252,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "OpenCode Monitor (latest CI build)"
+          name: "Usage Monitor (latest CI build)"
           files: |
             artifacts/windows/**/*.exe
             artifacts/macos-x64/**/*.dmg
@@ -265,6 +265,6 @@ jobs:
           prerelease: true
           body: |
             自动构建于 ${{ github.sha }} — 始终指向 main 分支最新提交。
-            正式版本请查看 [Releases](https://github.com/icehomura/opencode-monitor/releases) 页面。
+            正式版本请查看 [Releases](https://github.com/icehomura/usage-monitor/releases) 页面。
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

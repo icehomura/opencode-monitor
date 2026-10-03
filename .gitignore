@@ -1,12 +1,19 @@
 # Runtime config (contains API keys and user-specific settings)
+usage-monitor.json
 opencode-monitor.json
+usage-monitor.json
 opencode-monitor.json.bak
 
 # Database
+usage-monitor-data.db
 opencode-monitor-data.db
+usage-monitor-data.db
 opencode-monitor-data.db-wal
+usage-monitor-data.db
 opencode-monitor-data.db-shm
+usage-monitor-data.json
 opencode-monitor-data.json
+usage-monitor-data.json
 opencode-monitor-data.json.bak
 
 # Rust build artifacts

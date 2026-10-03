@@ -59,12 +59,12 @@ static DB: Mutex<Option<Connection>> = Mutex::new(None);
 
 fn db_path() -> std::path::PathBuf {
     if let Some(dir) = crate::app_data_override() {
-        return dir.join("opencode-monitor-data.db");
+        return dir.join("usage-monitor-data.db");
     }
     std::env::current_exe()
         .ok()
-        .and_then(|d| d.parent().map(|p| p.join("opencode-monitor-data.db")))
-        .unwrap_or_else(|| std::path::PathBuf::from("opencode-monitor-data.db"))
+        .and_then(|d| d.parent().map(|p| p.join("usage-monitor-data.db")))
+        .unwrap_or_else(|| std::path::PathBuf::from("usage-monitor-data.db"))
 }
 
 fn create_schema(conn: &Connection) {
