@@ -32,7 +32,7 @@
             <template #actions>
               <div class="acct-head-actions">
                 <BaseButton v-if="showPrimaryLogin" @click="loginPrimary">登录主账号</BaseButton>
-                <BaseButton variant="primary" @click="addAccount">
+                <BaseButton variant="primary" @click="toggleAddPanel">
                   <span style="margin-right:4px">+</span> 添加账号
                 </BaseButton>
               </div>
@@ -42,6 +42,20 @@
               <input type="checkbox" v-model="ownAccountAck" />
               <span>添加的账号需为<strong>你本人拥有或已获授权访问</strong>；本工具只读展示用量，不做绕过或自动切号。</span>
             </label>
+
+            <div v-if="addPanelOpen" class="acct-add">
+              <div class="acct-add-part">
+                <span class="acct-add-label">平台</span>
+                <DdSelect :options="providerOptions" v-model="addProvider" placeholder="选择平台" />
+              </div>
+              <div class="acct-add-part">
+                <span class="acct-add-label">登录</span>
+                <div class="acct-add-act">
+                  <BaseButton variant="primary" :disabled="!addProviderImplemented" @click="startAddAccount">打开登录窗口</BaseButton>
+                  <small v-if="!addProviderImplemented" class="acct-add-hint">支持开发中</small>
+                </div>
+              </div>
+            </div>
 
             <div v-if="accounts.length" class="acct-list">
               <div v-for="a in accounts" :key="a.id" class="acct-item">
@@ -62,6 +76,7 @@
                   <span v-if="a.org_id" class="acct-org" :title="a.org_id">{{ a.org_id }}</span>
                 </div>
                 <div class="acct-actions">
+                  <span v-if="a.provider_label" class="acct-badge acct-provider">{{ a.provider_label }}</span>
                   <BaseButton v-if="!a.is_primary" @click="setPrimaryAccount(a)">设为主账号</BaseButton>
                   <BaseButton @click="reloginAccount(a)">重新登录</BaseButton>
                   <BaseButton @click="logoutAccount(a)" :disabled="!a.logged_in">退出登录</BaseButton>
@@ -476,8 +491,37 @@ function accountName(id) {
 
 // 主账号未登录 / 无账号时的登录入口
 function loginPrimary() { startLogin() }
+
+// 「添加账号」展开面板：上半部分选平台，下半部分打开登录窗口
+const providers = ref([])
+const addPanelOpen = ref(false)
+const addProvider = ref('opencode')
+const providerOptions = computed(() => providers.value.map((p) => ({ v: p.id, label: p.label })))
+const addProviderInfo = computed(() => providers.value.find((p) => p.id === addProvider.value) || null)
+const addProviderImplemented = computed(() => addProviderInfo.value?.implemented !== false)
+
+async function loadProviders() {
+  try {
+    const r = await invoke('list_providers')
+    providers.value = Array.isArray(r) ? r : []
+  } catch {
+    // 后端尚未提供 list_providers 时回退为 OpenCode，保证「添加账号」可用
+    providers.value = [{ id: 'opencode', label: 'OpenCode', implemented: true, login_url: '' }]
+  }
+}
+
+function toggleAddPanel() {
+  addPanelOpen.value = !addPanelOpen.value
+  if (addPanelOpen.value) {
+    acctMsg.value = ''
+    acctMsgType.value = ''
+    loadProviders()
+  }
+}
+
 // 添加新账号：登录结果会新建一个账号。未勾选确认时不禁用按钮，而是明确提示（避免"灰按钮无解释"）
-function addAccount() {
+function startAddAccount() {
+  if (!addProviderImplemented.value) return
   if (!ownAccountAck.value) {
     ackWarn.value = true
     acctMsg.value = '添加账号前，请先勾选上方「账号需为本人所有或已获授权」'
@@ -488,7 +532,7 @@ function addAccount() {
   }
   acctMsg.value = ''
   acctMsgType.value = ''
-  startLogin({ addNew: true })
+  startLogin({ addNew: true, provider: addProvider.value })
 }
 function reloginAccount(a) { startLogin({ accountId: a.id }) }
 
@@ -600,9 +644,10 @@ async function doSync(full) {
 // ── 登录授权（状态统一走 acctMsg）──
 let loginPoll = null
 
-// opts.addNew = 添加新账号；opts.accountId = 重新登录指定账号；均空 = 主账号
+// opts.provider = 平台 id（缺省 = opencode）；opts.addNew = 添加新账号；opts.accountId = 重新登录指定账号；均空 = 主账号
 async function startLogin(opts = {}) {
   const args = {}
+  if (opts.provider) args.provider = opts.provider
   if (opts.addNew) args.addNew = true
   if (opts.accountId) args.accountId = opts.accountId
   acctMsg.value = opts.addNew ? '正在打开登录窗口（添加账号）…' : '正在打开登录窗口…'
@@ -752,6 +797,7 @@ watch(() => props.visible, async (v) => {
   acctMsg.value = ''
   await loadSettings()
   await loadAccounts()
+  await loadProviders()
   await loadLogs()
   await loadModels()
   await loadRpm()
@@ -836,6 +882,16 @@ async function checkForUpdate() {
 .acct-ack.warn { border-color: #e0a83c; background: rgba(224, 168, 60, .10); }
 .acct-ack input { margin-top: 2px; flex-shrink: 0; }
 .acct-ack strong { color: var(--text); font-weight: 600; }
+.acct-add {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 0 0 10px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(255, 255, 255, .02);
+}
+.acct-add-part { display: flex; align-items: center; gap: 10px; }
+.acct-add-label { font-size: 12px; color: var(--muted); flex-shrink: 0; width: 32px; }
+.acct-add-act { display: flex; align-items: center; gap: 8px; }
+.acct-add-hint { font-size: 11px; color: #e0a83c; }
 .acct-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .acct-item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -854,6 +910,7 @@ async function checkForUpdate() {
   background: rgba(79,140,255,.12); border: 1px solid rgba(79,140,255,.30);
   border-radius: 8px; padding: 0 6px; line-height: 1.6;
 }
+.acct-provider { color: var(--muted); background: rgba(255,255,255,.06); border-color: var(--border); align-self: center; }
 .acct-state { font-size: 10px; font-weight: 500; color: var(--muted); background: var(--border); border-radius: 8px; padding: 0 6px; line-height: 1.6; white-space: nowrap; }
 .acct-state.on { color: var(--green); }
 .acct-detail { font-size: 11px; color: var(--muted); }
