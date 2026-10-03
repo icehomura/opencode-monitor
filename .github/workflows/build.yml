@@ -239,8 +239,12 @@ jobs:
           name: linux-aarch64
           path: artifacts/linux-aarch64
 
+      # 这个 job 没有 checkout，`gh release delete --cleanup-tag` 需要 git 仓库会失败（被 || true 吞掉），
+      # 导致 latest 的 tag 一直停在旧提交、旧资产越积越多；改用 API 删 tag（不需要本地 git）。
       - name: Delete old latest release
-        run: gh release delete latest --yes --cleanup-tag || true
+        run: |
+          gh release delete latest --yes || true
+          gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/latest" || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
