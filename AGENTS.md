@@ -90,8 +90,13 @@ opencode-monitor/
 - 后台循环默认每 30 秒（最小 10 秒，`incremental_secs`），**逐个账号**同步并刷新各自额度，emit `quota-updated` / `sync-status`。
 - 频率与退避保持保守（分页之间 250ms、429/5xx 冷却 120s，见 `COOLDOWN_UNTIL`），不要为了「更实时」调激进。
 
+### 汇率换算（显示层）
+- `get_exchange_rate` 依次尝试 `open.er-api.com` / `frankfurter.app` / `jsdelivr/currency-api`（都免 Key），结果写进配置缓存；`set_exchange_rate` 供手动兜底。
+- 前端 `composables/useCurrency.js`：`money()` / `moneyUsd()` / `moneyFine()` 统一出金额字符串。
+  约定：**美元符号在前（`$1.23`），人民币符号在后（`1.23¥`）**，默认两位小数；开启换算时 `真实花销 = 美元 × 汇率 ÷ 6`（$10 计划得 $60 额度 ≈ 1:6）。只影响显示。
+
 ### 配置
-- `opencode-monitor.json`：`accounts`（数组）/ `primary_account` / `base_url` / `incremental_secs` / `close_action`。
+- `opencode-monitor.json`：`accounts`（数组）/ `primary_account` / `base_url` / `incremental_secs` / `close_action` / `exchange_rate` / `exchange_rate_at` / `exchange_rate_source`。
 - 读写走 `config_path()` + `read_config_value()` / `update_config_value()` 唯一入口。
 
 ## 命令列表
@@ -99,6 +104,7 @@ opencode-monitor/
 `get_settings`、`save_settings`、`list_accounts`、`set_primary_account`、`rename_account`、`remove_account`、
 `get_quota`（可带 `accountId`）、`get_sync_status`、`sync_request_logs_now`、
 `get_dashboard`（可带 `sinceMs` / `untilMs`）、`get_request_logs`、`get_models`（可带 `accountId`）、`get_rpm`、
+`get_exchange_rate`、`set_exchange_rate`、
 `open_login_window`、`capture_login`、`login_status`、`logout`、
 `get_close_action`、`set_close_action`、`get_autostart`、`set_autostart`。
 
@@ -113,4 +119,5 @@ cd src-tauri && cargo test
 
 ## 测试
 
-- `cargo test`：microCents 解析、SQLite upsert 幂等、逐条日志按天聚合。
+- `cargo test`：microCents 解析、request-logs 金额（美元浮点→microCents）、SQLite upsert 幂等与账号隔离、汇率点分路径解析。
+- 真机联网（可选）：`cargo test -- --ignored live_` 验证公开汇率源可用。
