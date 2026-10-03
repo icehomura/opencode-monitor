@@ -66,7 +66,7 @@
               <span class="tok-label">金额</span>
               <span class="tok-num">{{ fmtUsdFine(wsCost) }}</span>
             </div>
-            <div class="tok-cell tok-cached">
+            <div class="tok-cell tok-total">
               <span class="tok-label">空闲时间</span>
               <span class="tok-num">{{ idleDisplay }}</span>
             </div>
