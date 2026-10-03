@@ -127,9 +127,19 @@ fn get_settings() -> serde_json::Value {
         .and_then(|v| v.as_str())
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(opencode::DEFAULT_BASE_URL);
+    let rate = cfg.get("exchange_rate").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let rate_at = cfg.get("exchange_rate_at").and_then(|v| v.as_i64()).unwrap_or(0);
+    let rate_src = cfg
+        .get("exchange_rate_source")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     json!({
         "base_url": base,
         "incremental_secs": incremental_secs(),
+        "exchange_rate": rate,
+        "exchange_rate_at": rate_at,
+        "exchange_rate_source": rate_src,
     })
 }
 
@@ -175,6 +185,90 @@ fn get_sync_status() -> serde_json::Value {
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
+}
+
+/// 从 JSON 里按点分路径取一个正数（如 `rates.CNY` / `usd.cny`）。
+fn pick_rate(v: &serde_json::Value, path: &str) -> Option<f64> {
+    let mut cur = v;
+    for seg in path.split('.') {
+        cur = cur.get(seg)?;
+    }
+    let rate = cur.as_f64()?;
+    if rate > 0.0 {
+        Some(rate)
+    } else {
+        None
+    }
+}
+
+/// 拉取 USD→CNY 汇率：依次尝试几个**免费公开源**（都不需要 API Key）。
+#[tauri::command]
+async fn get_exchange_rate() -> Result<serde_json::Value, String> {
+    const SOURCES: [(&str, &str, &str); 3] = [
+        ("open.er-api.com", "https://open.er-api.com/v6/latest/USD", "rates.CNY"),
+        ("frankfurter.app", "https://api.frankfurter.app/latest?from=USD&to=CNY", "rates.CNY"),
+        (
+            "jsdelivr/currency-api",
+            "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json",
+            "usd.cny",
+        ),
+    ];
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .user_agent("opencode-monitor")
+        .build()
+        .map_err(|e| format!("创建请求客户端失败：{e}"))?;
+
+    let mut last_err = String::new();
+    for (name, url, path) in SOURCES {
+        let got = http
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| format!("{name} 请求失败：{e}"))
+            .and_then(|resp| {
+                if !resp.status().is_success() {
+                    Err(format!("{name} 返回 HTTP {}", resp.status().as_u16()))
+                } else {
+                    Ok(resp)
+                }
+            });
+        let v: Result<serde_json::Value, String> = match got {
+            Ok(resp) => resp
+                .json()
+                .await
+                .map_err(|e| format!("{name} 响应解析失败：{e}")),
+            Err(e) => Err(e),
+        };
+        match v.ok().as_ref().and_then(|v| pick_rate(v, path)) {
+            Some(rate) => {
+                let now = chrono::Utc::now().timestamp_millis();
+                update_config_value(|c| {
+                    c["exchange_rate"] = json!(rate);
+                    c["exchange_rate_at"] = json!(now);
+                    c["exchange_rate_source"] = json!(name);
+                })?;
+                return Ok(json!({ "rate": rate, "source": name, "fetched_at": now }));
+            }
+            None => last_err = format!("{name} 未取到汇率"),
+        }
+    }
+    Err(format!("获取汇率失败：{last_err}"))
+}
+
+/// 手动写入汇率（自动获取不可用时兜底）。
+#[tauri::command]
+fn set_exchange_rate(rate: f64) -> Result<serde_json::Value, String> {
+    if !(rate > 0.0) || rate > 100.0 {
+        return Err("汇率看起来不合理（应在 0~100 之间）".into());
+    }
+    let now = chrono::Utc::now().timestamp_millis();
+    update_config_value(|c| {
+        c["exchange_rate"] = json!(rate);
+        c["exchange_rate_at"] = json!(now);
+        c["exchange_rate_source"] = json!("manual");
+    })?;
+    Ok(json!({ "ok": true, "rate": rate, "source": "manual", "fetched_at": now }))
 }
 
 /// 立即同步：逐个账号拉取逐条日志（需要先完成 WebView 授权）。
@@ -1048,6 +1142,8 @@ fn main() {
             get_quota,
             get_sync_status,
             quit_app,
+            get_exchange_rate,
+            set_exchange_rate,
             get_dashboard,
             get_close_action,
             set_close_action,
@@ -1089,4 +1185,30 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 汇率源返回结构不同（`rates.CNY` / `usd.cny`），点分路径解析要都能取到，且拒绝非法值。
+    #[test]
+    fn pick_rate_reads_nested_sources() {
+        let er = serde_json::json!({"rates": {"CNY": 6.714383}});
+        assert_eq!(pick_rate(&er, "rates.CNY"), Some(6.714383));
+        let jsd = serde_json::json!({"usd": {"cny": 6.70689272}});
+        assert_eq!(pick_rate(&jsd, "usd.cny"), Some(6.70689272));
+        assert_eq!(pick_rate(&er, "rates.MISSING"), None);
+        assert_eq!(pick_rate(&serde_json::json!({"rates": {"CNY": 0}}), "rates.CNY"), None);
+    }
+
+    /// 真机（联网）验证：直接调用命令体，确认公开源能取到 USD→CNY 汇率。
+    #[tokio::test]
+    #[ignore]
+    async fn live_fetch_exchange_rate() {
+        let r = get_exchange_rate().await.expect("应能取到汇率");
+        let rate = r["rate"].as_f64().unwrap_or(0.0);
+        assert!(rate > 3.0 && rate < 12.0, "USD→CNY 应在合理区间，实得 {rate}");
+        println!("汇率 = {rate}（来源 {}）", r["source"]);
+    }
 }
