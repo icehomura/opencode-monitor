@@ -64,7 +64,7 @@
             </div>
             <div class="tok-cell tok-cached">
               <span class="tok-label">金额</span>
-              <span class="tok-num">{{ fmtUsdFine(wsCost) }}</span>
+              <span class="tok-num">{{ moneyFine(wsCost) }}</span>
             </div>
             <div class="tok-cell tok-total">
               <span class="tok-label">空闲时间</span>
@@ -80,7 +80,7 @@
             </div>
             <div class="tok-cell tok-cached">
               <span class="tok-label">平均金额/分</span>
-              <span class="tok-num">{{ fmtUsdFine(avgCostPerMin) }}</span>
+              <span class="tok-num">{{ moneyFine(avgCostPerMin) }}</span>
             </div>
             <div class="tok-cell tok-total">
               <span class="tok-label">时间利用率</span>
@@ -102,11 +102,11 @@
           <div class="quota-main">
             <div class="quota-left">
               <span class="quota-label">剩余</span>
-              <span class="quota-remain" :class="m.tone">{{ fmtUsd(m.remaining) }}</span>
-              <span class="quota-limit">/ {{ fmtUsd(m.limit) }}</span>
+              <span class="quota-remain" :class="m.tone">{{ money(m.remaining) }}</span>
+              <span class="quota-limit">/ {{ money(m.limit) }}</span>
             </div>
             <div class="quota-right">
-              <span class="quota-used">已用 {{ fmtUsd(m.used) }}</span>
+              <span class="quota-used">已用 {{ money(m.used) }}</span>
               <span class="quota-used">剩余 {{ m.pct.toFixed(0) }}%</span>
             </div>
           </div>
@@ -159,7 +159,8 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { fmtUsd, fmtUsdFine, fmtTokens, fmtDateTime, remainPct } from '../utils/format'
+import { fmtTokens, fmtDateTime, remainPct } from '../utils/format'
+import { money, moneyFine } from '../composables/useCurrency'
 import DdSelect from './DdSelect.vue'
 
 const props = defineProps({

@@ -56,7 +56,7 @@
                   </span>
                   <span class="acct-detail">
                     本地 {{ a.rows || 0 }} 条 · 最近同步 {{ fmtAgo(a.last_sync_ms) }} ·
-                    <template v-if="a.quota">额度 5 小时 {{ fmtUsd(a.quota.five_hour.used_micro_cents) }} / 周 {{ fmtUsd(a.quota.week.used_micro_cents) }} / 月 {{ fmtUsd(a.quota.month.used_micro_cents) }}</template>
+                    <template v-if="a.quota">额度 5 小时 {{ money(a.quota.five_hour.used_micro_cents) }} / 周 {{ money(a.quota.week.used_micro_cents) }} / 月 {{ money(a.quota.month.used_micro_cents) }}</template>
                     <template v-else>额度 —</template>
                   </span>
                   <span v-if="a.org_id" class="acct-org" :title="a.org_id">{{ a.org_id }}</span>
@@ -113,9 +113,9 @@
           <SettingsCard title="当前额度（主账号）" description="来自主账号的控制台额度，随账号与同步更新">
             <div v-if="quota" class="quota-lines">
               <span>计划：{{ quota.plan_name }}</span>
-              <span>5 小时：{{ fmtUsd(quota.five_hour.used_micro_cents) }} / {{ fmtUsd(quota.five_hour.limit_micro_cents) }}</span>
-              <span>本周：{{ fmtUsd(quota.week.used_micro_cents) }} / {{ fmtUsd(quota.week.limit_micro_cents) }}</span>
-              <span>本月：{{ fmtUsd(quota.month.used_micro_cents) }} / {{ fmtUsd(quota.month.limit_micro_cents) }}</span>
+              <span>5 小时：{{ money(quota.five_hour.used_micro_cents) }} / {{ money(quota.five_hour.limit_micro_cents) }}</span>
+              <span>本周：{{ money(quota.week.used_micro_cents) }} / {{ money(quota.week.limit_micro_cents) }}</span>
+              <span>本月：{{ money(quota.month.used_micro_cents) }} / {{ money(quota.month.limit_micro_cents) }}</span>
               <span>到期：{{ fmtDate(quota.ends_at) }}</span>
             </div>
             <div v-else class="quota-lines"><span class="muted">暂无额度数据</span></div>
@@ -151,7 +151,7 @@
                     <td class="num">{{ fmtTokens(r.cache_write_tokens, convertUnits) }}</td>
                     <td class="num">{{ r.duration_ms || 0 }}ms</td>
                     <td class="num" :class="{ bad: r.status_code >= 400 }">{{ r.status_code || '-' }}</td>
-                    <td class="num">{{ fmtUsd(r.cost_micro_cents) }}</td>
+                    <td class="num">{{ money(r.cost_micro_cents) }}</td>
                   </tr>
                   <tr v-if="!reqLogs.length"><td colspan="10" class="empty">{{ logEmptyText }}</td></tr>
                 </tbody>
@@ -190,11 +190,11 @@
                 <tbody>
                   <tr v-for="m in models" :key="m.id">
                     <td class="ellipsis" :title="m.id">{{ m.name }}<span v-if="!m.known" class="muted"> 未知</span></td>
-                    <td class="num">{{ m.limit && m.limit.unlimited ? '不限' : (m.limit ? '$' + m.limit.usd : '—') }}</td>
+                    <td class="num">{{ m.limit && m.limit.unlimited ? '不限' : (m.limit ? moneyUsd(m.limit.usd) : '—') }}</td>
                     <td class="num">{{ reqPair(m.usage.five_hour.requests, m.limit && m.limit.req_5h) }}</td>
                     <td class="num">{{ reqPair(m.usage.week.requests, m.limit && m.limit.req_week) }}</td>
                     <td class="num">{{ reqPair(m.usage.month.requests, m.limit && m.limit.req_month) }}</td>
-                    <td class="num">{{ fmtUsd(m.usage.month.cost_micro_cents) }}</td>
+                    <td class="num">{{ money(m.usage.month.cost_micro_cents) }}</td>
                   </tr>
                   <tr v-if="!models.length"><td colspan="6" class="empty">暂无用量记录（登录后同步逐条日志）</td></tr>
                 </tbody>
@@ -230,6 +230,36 @@
               </div>
             </SettingsCard>
           </div>
+
+          <SettingsCard title="汇率换算（真实花销）"
+            description="按 USD→CNY 汇率换算，再除以计划价值比（$10 计划得 $60 额度 ≈ 1:6），得到真实花销">
+            <div class="toggle-row">
+              <BaseToggle v-model="currency.enabled" labelOn="显示人民币" labelOff="显示美元" />
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">USD → CNY 汇率</span>
+              <span class="rate-value">{{ currency.rate ? currency.rate.toFixed(4) : '未获取' }}</span>
+              <BaseButton @click="fetchRate" :disabled="currency.loading">
+                {{ currency.loading ? '获取中…' : '获取最新' }}
+              </BaseButton>
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">手动填写汇率</span>
+              <BaseInput v-model.number="rateInput" type="number" step="0.0001" />
+              <BaseButton @click="saveManualRate" :disabled="!rateInput">保存</BaseButton>
+            </div>
+            <div class="settings-row">
+              <span class="settings-label">计划价值比（÷）</span>
+              <BaseInput v-model.number="currency.divisor" type="number" spinner :min="1" :max="100" />
+            </div>
+            <div class="rate-preview">
+              $1.00 ≈ {{ convert(1).toFixed(2) }}¥
+              <span class="rate-meta" v-if="currency.at">· {{ currency.source || '手动' }} · {{ fmtAgo(currency.at) }}</span>
+            </div>
+            <template #hint>
+              <small :class="['ff-hint', rateMsgType]">{{ rateMsg }}</small>
+            </template>
+          </SettingsCard>
 
           <div class="grid-2">
             <SettingsCard title="关闭按钮行为" description="点击关闭按钮时的默认操作">
@@ -291,7 +321,8 @@ import SettingsCard from './SettingsCard.vue'
 import DdSelect from './DdSelect.vue'
 import ThemeIcon from './ThemeIcon.vue'
 import { useTauri } from '../composables/useTauri'
-import { fmtUsd, fmtTokens, fmtDate, fmtAgo, fmtClock } from '../utils/format'
+import { fmtTokens, fmtDate, fmtAgo, fmtClock } from '../utils/format'
+import { currency, persistCurrency, money, moneyUsd, convert } from '../composables/useCurrency'
 import { version as pkgVersion } from '../../package.json'
 import iconUrl from '../../icons/icon.png'
 
@@ -342,6 +373,48 @@ const anyLoggedIn = computed(() => accounts.value.some((a) => a.logged_in))
 const loggedInCount = computed(() => accounts.value.filter((a) => a.logged_in).length)
 const showPrimaryLogin = computed(() => !primaryAccount.value || !primaryAccount.value.logged_in)
 
+// ── 汇率换算（显示层）──
+const rateInput = ref(Number((currency.rate || 0).toFixed(4)))
+const rateMsg = ref('')
+const rateMsgType = ref('')
+
+watch(() => currency.enabled, (on) => {
+  persistCurrency()
+  if (on && !currency.rate) fetchRate()
+})
+watch(() => currency.divisor, () => persistCurrency())
+watch(() => currency.rate, (v) => { rateInput.value = Number(v.toFixed(4)) })
+
+async function fetchRate() {
+  currency.loading = true
+  rateMsg.value = '正在获取汇率…'; rateMsgType.value = ''
+  try {
+    const r = await invoke('get_exchange_rate')
+    currency.rate = Number(r?.rate) || 0
+    currency.source = r?.source || ''
+    currency.at = Number(r?.fetched_at) || Date.now()
+    persistCurrency()
+    rateMsg.value = `✓ 已获取（${currency.source}）`; rateMsgType.value = 'ok'
+  } catch (e) {
+    rateMsg.value = String(e); rateMsgType.value = 'err'
+  } finally {
+    currency.loading = false
+  }
+}
+
+async function saveManualRate() {
+  try {
+    const r = await invoke('set_exchange_rate', { rate: Number(rateInput.value) })
+    currency.rate = Number(r?.rate) || Number(rateInput.value)
+    currency.source = 'manual'
+    currency.at = Number(r?.fetched_at) || Date.now()
+    persistCurrency()
+    rateMsg.value = '✓ 已保存手动汇率'; rateMsgType.value = 'ok'
+  } catch (e) {
+    rateMsg.value = String(e); rateMsgType.value = 'err'
+  }
+}
+
 const _loading = ref(true)
 
 async function loadSettings() {
@@ -349,6 +422,11 @@ async function loadSettings() {
     const s = await invoke('get_settings')
     baseUrl.value = s?.base_url || 'https://opencode.ai/console/api'
     intervalSecs.value = s?.incremental_secs || 30
+    if (!currency.rate && Number(s?.exchange_rate) > 0) {
+      currency.rate = Number(s.exchange_rate)
+      currency.at = Number(s.exchange_rate_at) || 0
+      currency.source = s.exchange_rate_source || ''
+    }
   } catch {}
   await loadQuota()
   await loadSync()
@@ -726,6 +804,9 @@ async function checkForUpdate() {
 .form-col { display: flex; flex-direction: column; gap: 10px; width: 100%; }
 .sync-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .acct-head-actions { display: flex; align-items: center; gap: 8px; }
+.rate-value { font-size: 13px; font-weight: 600; color: var(--text); min-width: 72px; }
+.rate-preview { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.rate-meta { opacity: .75; }
 .acct-ack {
   display: flex; align-items: flex-start; gap: 8px; margin: 0 0 10px;
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
